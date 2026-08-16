@@ -7,7 +7,9 @@
     loading:$('loadingState'), error:$('errorState'), errorTitle:$('errorTitle'), errorText:$('errorText'), retry:$('retryBtn'), empty:$('emptyState'), list:$('trackList'),
     artist:$('artistInput'), title:$('titleInput'), manualPreview:$('manualPreviewBtn'), manualServices:$('manualServices'),
     sheet:$('serviceSheet'), backdrop:$('sheetBackdrop'), sheetClose:$('sheetClose'), sheetTitle:$('sheetTitle'), sheetArtist:$('sheetArtist'), sheetServices:$('sheetServices'), extended:$('extendedToggle'),
-    mini:$('miniPlayer'), miniArt:$('miniArtwork'), miniTitle:$('miniTitle'), miniArtist:$('miniArtist'), miniMatch:$('miniMatch'), miniTime:$('miniTime'), miniPlay:$('miniPlayBtn'), miniSeek:$('miniSeek'), audio:$('previewAudio'), toast:$('toast')
+    mini:$('miniPlayer'), miniArt:$('miniArtwork'), miniTitle:$('miniTitle'), miniArtist:$('miniArtist'), miniMatch:$('miniMatch'), miniTime:$('miniTime'), miniPlay:$('miniPlayBtn'), miniSeek:$('miniSeek'), audio:$('previewAudio'), toast:$('toast'),
+    audioMiniWrap:$('audioMiniWrap'), spotifyEmbedWrap:$('spotifyEmbedWrap'), spotifyHost:$('spotifyEmbedHost'), spotifyClose:$('spotifyCloseBtn'),
+    previewPriority:$('previewPriority'), spotifyClientId:$('spotifyClientId'), spotifyStatus:$('spotifyStatus'), spotifyConnect:$('spotifyConnectBtn'), saveSpotify:$('saveSpotifyBtn'), spotifyRedirect:$('spotifyRedirectUri'), copyRedirect:$('copyRedirectBtn')
   };
 
   const GENRES = [
@@ -28,7 +30,7 @@
   ];
   const CACHE_MS = 15 * 60 * 1000;
   let state = {genre:GENRES[0], view:'top', tracks:[], selected:null};
-  let deferredInstall = null, previewRequestId = 0, currentPreviewTrack = null, toastTimer;
+  let deferredInstall = null, previewRequestId = 0, currentPreviewTrack = null, activePreviewProvider = null, toastTimer;
 
   function toast(msg){ clearTimeout(toastTimer); els.toast.textContent=msg; els.toast.classList.add('show'); toastTimer=setTimeout(()=>els.toast.classList.remove('show'),2200); }
   function normalize(s=''){return String(s).replace(/\s+/g,' ').trim();}
@@ -37,8 +39,8 @@
   function cacheKey(){return `bb13:${state.view}:${state.genre.slug}`;}
   function getCache(){try{const x=JSON.parse(localStorage.getItem(cacheKey()));return x&&Date.now()-x.ts<CACHE_MS?x.data:null}catch{return null}}
   function setCache(data){try{localStorage.setItem(cacheKey(),JSON.stringify({ts:Date.now(),data}))}catch{}}
-  function history(){try{return JSON.parse(localStorage.getItem('beatbridge_history_v13')||'[]')}catch{return[]}}
-  function remember(track){let h=history().filter(x=>!(x.title===track.title&&x.artist===track.artist));h.unshift({...track,seenAt:Date.now()});h=h.slice(0,80);localStorage.setItem('beatbridge_history_v13',JSON.stringify(h));}
+  function getHistory(){try{return JSON.parse(localStorage.getItem('beatbridge_history_v13')||'[]')}catch{return[]}}
+  function remember(track){let h=getHistory().filter(x=>!(x.title===track.title&&x.artist===track.artist));h.unshift({...track,seenAt:Date.now()});h=h.slice(0,80);localStorage.setItem('beatbridge_history_v13',JSON.stringify(h));}
 
   function beatportUrl(){
     const g=state.genre;
@@ -118,7 +120,7 @@
   async function loadChart(force=false){
     els.heading.textContent=heading();els.chartTitle.textContent=heading();els.kicker.textContent=state.view==='history'?'LOKAL':'BEATPORT';
     if(state.view==='history'){
-      state.tracks=history();setStatus('ok','Lokal gespeichert');renderTrackList();return;
+      state.tracks=getHistory();setStatus('ok','Lokal gespeichert');renderTrackList();return;
     }
     setLoading(true);setStatus('ok','Live-Daten werden geladen');
     if(!force){const c=getCache();if(c&&c.length){state.tracks=c;setStatus('ok','Beatport · zwischengespeichert');renderTrackList();refreshInBackground();return;}}
@@ -151,16 +153,108 @@
 
   function cleanForMatch(s=''){return normalize(s).toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'').replace(/\b(original|extended|radio|club|mix|remix|edit|version|rework|bootleg)\b/g,' ').replace(/[^a-z0-9]+/g,' ').replace(/\s+/g,' ').trim();}
   function tokenScore(a='',b=''){const aa=new Set(cleanForMatch(a).split(' ').filter(Boolean)),bb=new Set(cleanForMatch(b).split(' ').filter(Boolean));if(!aa.size||!bb.size)return 0;let hit=0;aa.forEach(x=>{if(bb.has(x))hit++});return 2*hit/(aa.size+bb.size);}
-  function itunesSearch(term){return new Promise((resolve,reject)=>{const id=++previewRequestId,cb=`__bb_${Date.now()}_${Math.random().toString(36).slice(2)}`,s=document.createElement('script');let done=false;const timer=setTimeout(()=>finish(new Error('Zeitüberschreitung')),9000);function finish(e,d){if(done)return;done=true;clearTimeout(timer);delete window[cb];s.remove();if(id!==previewRequestId)return resolve({results:[]});e?reject(e):resolve(d||{results:[]});}window[cb]=d=>finish(null,d);s.onerror=()=>finish(new Error('Preview-Suche nicht erreichbar'));s.src=`https://itunes.apple.com/search?term=${encodeURIComponent(term)}&country=DE&media=music&entity=song&limit=8&explicit=Yes&callback=${encodeURIComponent(cb)}`;document.head.appendChild(s);});}
-  function scoreResult(r,t){return tokenScore(t.title,r.trackName||'')*.62+tokenScore(t.artist,r.artistName||'')*.38;}
+
+  // Apple/iTunes preview fallback (no account or API key needed).
+  function itunesSearch(term){return new Promise((resolve,reject)=>{const cb=`__bb_${Date.now()}_${Math.random().toString(36).slice(2)}`,s=document.createElement('script');let done=false;const timer=setTimeout(()=>finish(new Error('Zeitüberschreitung')),9000);function finish(e,d){if(done)return;done=true;clearTimeout(timer);delete window[cb];s.remove();e?reject(e):resolve(d||{results:[]});}window[cb]=d=>finish(null,d);s.onerror=()=>finish(new Error('Apple-Hörprobe nicht erreichbar'));s.src=`https://itunes.apple.com/search?term=${encodeURIComponent(term)}&country=DE&media=music&entity=song&limit=8&explicit=Yes&callback=${encodeURIComponent(cb)}`;document.head.appendChild(s);});}
+  function scoreAppleResult(r,t){return tokenScore(t.title,r.trackName||'')*.62+tokenScore(t.artist,r.artistName||'')*.38;}
+
+  const SPOTIFY_CLIENT_KEY='beatbridge_spotify_client_v15';
+  const SPOTIFY_TOKEN_KEY='beatbridge_spotify_token_v15';
+  const SPOTIFY_MATCH_KEY='beatbridge_spotify_matches_v15';
+  const PRIORITY_KEY='beatbridge_preview_priority_v15';
+  function spotifyClientId(){return normalize(localStorage.getItem(SPOTIFY_CLIENT_KEY)||'');}
+  function spotifyRedirectUri(){const u=new URL(location.href);u.search='';u.hash='';return u.href;}
+  function readSpotifyToken(){try{return JSON.parse(localStorage.getItem(SPOTIFY_TOKEN_KEY)||'null')}catch{return null}}
+  function saveSpotifyToken(data,previous=null){const token={access_token:data.access_token,refresh_token:data.refresh_token||previous?.refresh_token||'',expires_at:Date.now()+Math.max(30,Number(data.expires_in||3600))*1000};localStorage.setItem(SPOTIFY_TOKEN_KEY,JSON.stringify(token));return token;}
+  function spotifyMatches(){try{return JSON.parse(localStorage.getItem(SPOTIFY_MATCH_KEY)||'{}')}catch{return{}}}
+  function spotifySig(track){return `${cleanForMatch(track.artist)}|${cleanForMatch(track.title)}`;}
+  function cacheSpotifyMatch(track,match){const all=spotifyMatches();all[spotifySig(track)]={ts:Date.now(),match};const keys=Object.keys(all);if(keys.length>180)keys.sort((a,b)=>(all[b].ts||0)-(all[a].ts||0)).slice(180).forEach(k=>delete all[k]);localStorage.setItem(SPOTIFY_MATCH_KEY,JSON.stringify(all));}
+  function cachedSpotifyMatch(track){const x=spotifyMatches()[spotifySig(track)];return x&&Date.now()-(x.ts||0)<30*24*60*60*1000?x.match:null;}
+  function randomString(len=64){const chars='ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-._~';const a=new Uint8Array(len);crypto.getRandomValues(a);return Array.from(a,x=>chars[x%chars.length]).join('');}
+  function base64Url(bytes){return btoa(String.fromCharCode(...new Uint8Array(bytes))).replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/,'');}
+  async function sha256(text){return crypto.subtle.digest('SHA-256',new TextEncoder().encode(text));}
+  function updateSpotifyStatus(){
+    const cid=spotifyClientId(),tok=readSpotifyToken();els.spotifyClientId.value=cid;els.spotifyRedirect.textContent=spotifyRedirectUri();
+    if(!cid){els.spotifyStatus.textContent='Nicht eingerichtet';els.spotifyConnect.textContent='Verbinden';return;}
+    if(tok?.access_token||tok?.refresh_token){els.spotifyStatus.textContent='Verbunden';els.spotifyConnect.textContent='Neu verbinden';}
+    else{els.spotifyStatus.textContent='Client ID gespeichert – noch nicht verbunden';els.spotifyConnect.textContent='Verbinden';}
+  }
+  async function startSpotifyAuth(){
+    const cid=normalize(els.spotifyClientId.value)||spotifyClientId();if(!cid)return toast('Zuerst Spotify Client ID eintragen');
+    localStorage.setItem(SPOTIFY_CLIENT_KEY,cid);const verifier=randomString(72),challenge=base64Url(await sha256(verifier)),st=randomString(24);
+    sessionStorage.setItem('bb_spotify_verifier',verifier);sessionStorage.setItem('bb_spotify_state',st);
+    const p=new URLSearchParams({client_id:cid,response_type:'code',redirect_uri:spotifyRedirectUri(),code_challenge_method:'S256',code_challenge:challenge,state:st});
+    location.href=`https://accounts.spotify.com/authorize?${p.toString()}`;
+  }
+  async function exchangeSpotifyCode(code){
+    const cid=spotifyClientId(),verifier=sessionStorage.getItem('bb_spotify_verifier')||'';if(!cid||!verifier)throw new Error('Spotify-Anmeldung abgelaufen');
+    const body=new URLSearchParams({client_id:cid,grant_type:'authorization_code',code,redirect_uri:spotifyRedirectUri(),code_verifier:verifier});
+    const r=await fetch('https://accounts.spotify.com/api/token',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body});
+    if(!r.ok)throw new Error(`Spotify Token HTTP ${r.status}`);saveSpotifyToken(await r.json());sessionStorage.removeItem('bb_spotify_verifier');sessionStorage.removeItem('bb_spotify_state');
+  }
+  async function refreshSpotifyToken(){
+    const old=readSpotifyToken(),cid=spotifyClientId();if(!old?.refresh_token||!cid)return null;
+    const body=new URLSearchParams({client_id:cid,grant_type:'refresh_token',refresh_token:old.refresh_token});
+    const r=await fetch('https://accounts.spotify.com/api/token',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body});
+    if(!r.ok){localStorage.removeItem(SPOTIFY_TOKEN_KEY);updateSpotifyStatus();return null;}return saveSpotifyToken(await r.json(),old);
+  }
+  async function spotifyAccessToken(){const tok=readSpotifyToken();if(!tok)return null;if(tok.access_token&&tok.expires_at>Date.now()+60000)return tok.access_token;return (await refreshSpotifyToken())?.access_token||null;}
+  async function spotifyApi(url,retry=true){const token=await spotifyAccessToken();if(!token)return null;const r=await fetch(url,{headers:{Authorization:`Bearer ${token}`}});if(r.status===401&&retry){const fresh=await refreshSpotifyToken();if(fresh)return spotifyApi(url,false);}if(!r.ok)throw new Error(`Spotify API HTTP ${r.status}`);return r.json();}
+  async function handleSpotifyCallback(){
+    const p=new URLSearchParams(location.search),code=p.get('code'),err=p.get('error');if(!code&&!err){updateSpotifyStatus();return;}
+    if(err){toast(`Spotify: ${err}`);history.replaceState({},'',spotifyRedirectUri());updateSpotifyStatus();return;}
+    const expected=sessionStorage.getItem('bb_spotify_state'),got=p.get('state');
+    try{if(expected&&got!==expected)throw new Error('Ungültiger Spotify-Status');await exchangeSpotifyCode(code);toast('Spotify verbunden');}
+    catch(e){toast(e.message||'Spotify-Verbindung fehlgeschlagen');}
+    history.replaceState({},'',spotifyRedirectUri());updateSpotifyStatus();
+  }
+  function scoreSpotifyResult(r,t){const artists=(r.artists||[]).map(a=>a.name).join(', ');return tokenScore(t.title,r.name||'')*.62+tokenScore(t.artist,artists)*.38;}
+  async function findSpotifyTrack(track){
+    const cached=cachedSpotifyMatch(track);if(cached)return cached;
+    if(!spotifyClientId())return null;const token=await spotifyAccessToken();if(!token)return null;
+    const q=`track:${track.title} artist:${track.artist||''}`;const url=`https://api.spotify.com/v1/search?q=${encodeURIComponent(q)}&type=track&market=DE&limit=5`;
+    const data=await spotifyApi(url);const items=data?.tracks?.items||[];if(!items.length){cacheSpotifyMatch(track,null);return null;}
+    const best=items.sort((a,b)=>scoreSpotifyResult(b,track)-scoreSpotifyResult(a,track))[0],score=scoreSpotifyResult(best,track);
+    if(score<.42){cacheSpotifyMatch(track,null);return null;}
+    const match={id:best.id,uri:best.uri,url:best.external_urls?.spotify||`https://open.spotify.com/track/${best.id}`,name:best.name,artist:(best.artists||[]).map(a=>a.name).join(', '),artwork:best.album?.images?.[0]?.url||'',score};cacheSpotifyMatch(track,match);return match;
+  }
+
+  function setAudioPlayerVisible(){els.spotifyEmbedWrap.classList.add('hidden');els.audioMiniWrap.classList.remove('hidden');els.spotifyHost.innerHTML='';}
+  function setSpotifyPlayerVisible(){els.audio.pause();els.audio.removeAttribute('src');els.audio.load();els.audioMiniWrap.classList.add('hidden');els.spotifyEmbedWrap.classList.remove('hidden');}
+  function stopInlinePreview(){els.audio.pause();if(activePreviewProvider==='spotify')els.spotifyHost.innerHTML='';syncPlay();}
+  async function playAudioPreview(track,preview,source){
+    activePreviewProvider=source;currentPreviewTrack=track;setAudioPlayerVisible();els.audio.pause();els.audio.src=preview.url;els.audio.load();
+    els.miniArt.src=preview.artwork||'';els.miniTitle.textContent=preview.name||track.title;els.miniArtist.textContent=preview.artist||track.artist;els.miniMatch.textContent=`Quelle: ${source==='beatport'?'Beatport':'Apple/iTunes'}${preview.matchText?` · ${preview.matchText}`:''}`;els.mini.classList.remove('hidden');els.miniSeek.value='0';els.miniTime.textContent='0:00';renderTrackList();
+    try{await els.audio.play();}catch{toast('Zum Starten ▶ antippen');}syncPlay();
+  }
+  function playSpotifyPreview(track,match){
+    activePreviewProvider='spotify';currentPreviewTrack=track;setSpotifyPlayerVisible();
+    const src=`https://open.spotify.com/embed/track/${encodeURIComponent(match.id)}?utm_source=beatbridge&theme=0`;
+    els.spotifyHost.innerHTML=`<iframe title="Spotify Embed: ${esc(match.name||track.title)}" src="${src}" width="100%" height="152" frameborder="0" allowfullscreen allow="autoplay; clipboard-write; encrypted-media; fullscreen; picture-in-picture" loading="eager"></iframe>`;
+    els.mini.classList.remove('hidden');remember({...track,spotifyId:match.id});renderTrackList();toast('Spotify-Treffer geladen – ▶ im Player antippen');
+  }
+  async function findApplePreview(track){
+    const data=await itunesSearch(`${track.artist} ${track.title}`),results=(data.results||[]).filter(r=>r.previewUrl).sort((a,b)=>scoreAppleResult(b,track)-scoreAppleResult(a,track));if(!results.length)return null;
+    const r=results[0],s=scoreAppleResult(r,track);return {url:r.previewUrl,artwork:(r.artworkUrl100||'').replace('100x100bb','300x300bb'),name:r.trackName||track.title,artist:r.artistName||track.artist,matchText:s>.78?'sehr guter Treffer':s>.58?'wahrscheinlicher Treffer':'möglicher Treffer'};
+  }
+  function previewPriority(){const raw=els.previewPriority?.value||localStorage.getItem(PRIORITY_KEY)||'beatport,spotify,apple';return raw.split(',').filter(x=>['beatport','spotify','apple'].includes(x));}
   async function previewTrack(track,btn=null){
-    if(!track?.title)return; if(btn)btn.classList.add('loading'); remember(track);
+    if(!track?.title)return;if(btn)btn.classList.add('loading');remember(track);const request=++previewRequestId;
     try{
-      const data=await itunesSearch(`${track.artist} ${track.title}`); const results=(data.results||[]).filter(r=>r.previewUrl).sort((a,b)=>scoreResult(b,track)-scoreResult(a,track));
-      if(!results.length)throw new Error('Keine Hörprobe gefunden');
-      const r=results[0]; currentPreviewTrack=track; els.audio.pause();els.audio.src=r.previewUrl;els.audio.load();
-      els.miniArt.src=(r.artworkUrl100||'').replace('100x100bb','300x300bb');els.miniTitle.textContent=r.trackName||track.title;els.miniArtist.textContent=r.artistName||track.artist;const s=scoreResult(r,track);els.miniMatch.textContent=s>.78?'Sehr guter Treffer':s>.58?'Wahrscheinlicher Treffer':'Möglicher Treffer';els.mini.classList.remove('hidden');els.miniSeek.value='0';els.miniTime.textContent='0:00';renderTrackList();
-      try{await els.audio.play();}catch{toast('Zum Starten ▶ antippen');}syncPlay();
+      for(const provider of previewPriority()){
+        if(request!==previewRequestId)return;
+        if(provider==='beatport'){
+          const url=track.previewUrl||track.preview_url||track.preview||'';
+          if(/^https?:\/\//i.test(url)){await playAudioPreview(track,{url,artwork:track.artwork||'',name:track.title,artist:track.artist},'beatport');return;}
+        }
+        if(provider==='spotify'){
+          try{const match=await findSpotifyTrack(track);if(request!==previewRequestId)return;if(match){playSpotifyPreview(track,match);return;}}catch(e){console.warn('Spotify fallback:',e);}
+        }
+        if(provider==='apple'){
+          const preview=await findApplePreview(track);if(request!==previewRequestId)return;if(preview){await playAudioPreview(track,preview,'apple');return;}
+        }
+      }
+      toast('Keine Hörprobe gefunden');
     }catch(e){toast(e.message||'Keine Hörprobe gefunden');}finally{if(btn)btn.classList.remove('loading');}
   }
   function syncPlay(){const playing=!els.audio.paused&&!els.audio.ended;els.miniPlay.textContent=playing?'Ⅱ':'▶';els.miniPlay.setAttribute('aria-label',playing?'Pausieren':'Abspielen');}
@@ -168,7 +262,40 @@
   function queryFor(track,service){let q=normalize(`${track.artist||''} ${track.title||''}`);if(els.extended.checked&&['soundcloud','youtube','ytmusic'].includes(service)&&!/(mix|remix|edit|version|bootleg)/i.test(q))q+=' extended mix';return q;}
   function openUrl(url){const w=window.open(url,'_blank','noopener,noreferrer');if(!w)location.href=url;}
   async function copyText(t){try{await navigator.clipboard.writeText(t);return true}catch{const ta=document.createElement('textarea');ta.value=t;document.body.appendChild(ta);ta.select();document.execCommand('copy');ta.remove();return true;}}
-  async function openService(service,track){const q=queryFor(track,service);if(!q)return;remember(track);const e=encodeURIComponent(q);if(service==='soundcloud')openUrl(`https://soundcloud.com/search?q=${e}`);else if(service==='spotify')openUrl(`https://open.spotify.com/search/${e}`);else if(service==='youtube')openUrl(`https://www.youtube.com/results?search_query=${e}`);else if(service==='ytmusic')openUrl(`https://music.youtube.com/search?q=${e}`);else if(service==='google')openUrl(`https://www.google.com/search?q=${e}`);else if(service==='simpmusic'){await copyText(q);toast('Suche kopiert – SimpMusic wird geöffnet');setTimeout(()=>{location.href='simpmusic://'},120);setTimeout(()=>{if(document.visibilityState==='visible')openUrl('https://simpmusic.org/')},900);}closeSheet();}
+  const IS_ANDROID=/Android/i.test(navigator.userAgent);
+  function androidIntent(webUrl,packageName){
+    const u=new URL(webUrl);
+    const target=`${u.host}${u.pathname}${u.search}${u.hash}`;
+    return `intent://${target}#Intent;scheme=${u.protocol.replace(':','')};package=${packageName};S.browser_fallback_url=${encodeURIComponent(webUrl)};end`;
+  }
+  function openPreferredApp(webUrl,packageName,label){
+    if(!IS_ANDROID){openUrl(webUrl);return;}
+    stopInlinePreview();
+    toast(`${label} wird geöffnet`);
+    // Direct navigation is intentional: Chrome only permits external app intents
+    // reliably when they originate from the user's tap, not from a later timer.
+    location.href=androidIntent(webUrl,packageName);
+  }
+  function openSimpMusic(q){
+    // SimpMusic currently has no documented free-text search deep link. Copy the
+    // exact query and launch the installed app directly instead of its website.
+    void copyText(q);
+    if(!IS_ANDROID){location.href='simpmusic://';return;}
+    stopInlinePreview();
+    toast('Suche kopiert – SimpMusic wird geöffnet');
+    const fallback='https://simpmusic.org/';
+    location.href=`intent://#Intent;scheme=simpmusic;package=com.maxrave.simpmusic;S.browser_fallback_url=${encodeURIComponent(fallback)};end`;
+  }
+  function openService(service,track){
+    const q=queryFor(track,service);if(!q)return;remember(track);const e=encodeURIComponent(q);
+    if(service==='soundcloud')openPreferredApp(`https://soundcloud.com/search?q=${e}`,'com.soundcloud.android','SoundCloud');
+    else if(service==='spotify')openPreferredApp(`https://open.spotify.com/search/${e}`,'com.spotify.music','Spotify');
+    else if(service==='youtube')openPreferredApp(`https://www.youtube.com/results?search_query=${e}`,'com.google.android.youtube','YouTube');
+    else if(service==='ytmusic')openPreferredApp(`https://music.youtube.com/search?q=${e}`,'com.google.android.apps.youtube.music','YouTube Music');
+    else if(service==='google')openUrl(`https://www.google.com/search?q=${e}`);
+    else if(service==='simpmusic')openSimpMusic(q);
+    closeSheet();
+  }
   function openSheet(track){state.selected=track;els.sheetTitle.textContent=track.title;els.sheetArtist.textContent=track.artist;els.sheet.classList.remove('hidden');els.sheet.setAttribute('aria-hidden','false');}
   function closeSheet(){els.sheet.classList.add('hidden');els.sheet.setAttribute('aria-hidden','true');}
 
@@ -190,8 +317,12 @@
     history.replaceState({},'',location.pathname);
   }
 
-  renderGenres();renderServices(els.sheetServices,false);renderServices(els.manualServices,true);
-  loadShareTarget();loadChart();
+  async function init(){
+    renderGenres();renderServices(els.sheetServices,false);renderServices(els.manualServices,true);
+    const savedPriority=localStorage.getItem(PRIORITY_KEY)||'beatport,spotify,apple';if([...els.previewPriority.options].some(o=>o.value===savedPriority))els.previewPriority.value=savedPriority;
+    updateSpotifyStatus();await handleSpotifyCallback();loadShareTarget();loadChart();
+  }
+  void init();
 
   els.chips.addEventListener('click',e=>{const b=e.target.closest('[data-slug]');if(!b)return;state.genre=GENRES.find(g=>g.slug===b.dataset.slug)||GENRES[0];renderGenres();if(state.view==='history'){state.view='top';document.querySelectorAll('.view-tab').forEach(x=>x.classList.toggle('active',x.dataset.view==='top'));}loadChart();});
   els.tabs.addEventListener('click',e=>{const b=e.target.closest('[data-view]');if(!b)return;state.view=b.dataset.view;document.querySelectorAll('.view-tab').forEach(x=>x.classList.toggle('active',x===b));loadChart();});
@@ -204,6 +335,11 @@
   els.manualPreview.addEventListener('click',()=>{const t={artist:normalize(els.artist.value),title:normalize(els.title.value)};if(!t.title&&!t.artist)return toast('Artist oder Titel eingeben');previewTrack(t)});
   els.miniPlay.addEventListener('click',async()=>{if(!els.audio.src)return;if(els.audio.paused){try{await els.audio.play()}catch{}}else els.audio.pause();syncPlay();});
   els.audio.addEventListener('play',syncPlay);els.audio.addEventListener('pause',syncPlay);els.audio.addEventListener('ended',syncPlay);els.audio.addEventListener('loadedmetadata',()=>{els.miniSeek.max=Number.isFinite(els.audio.duration)?els.audio.duration:30;});els.audio.addEventListener('timeupdate',()=>{if(!els.miniSeek.matches(':active'))els.miniSeek.value=els.audio.currentTime||0;els.miniTime.textContent=formatTime(els.audio.currentTime||0);});els.miniSeek.addEventListener('input',()=>{if(Number.isFinite(els.audio.duration))els.audio.currentTime=Number(els.miniSeek.value)});
+  els.previewPriority.addEventListener('change',()=>{localStorage.setItem(PRIORITY_KEY,els.previewPriority.value);toast('Hörproben-Reihenfolge gespeichert');});
+  els.saveSpotify.addEventListener('click',()=>{const id=normalize(els.spotifyClientId.value);if(!id)return toast('Spotify Client ID eintragen');localStorage.setItem(SPOTIFY_CLIENT_KEY,id);localStorage.removeItem(SPOTIFY_TOKEN_KEY);updateSpotifyStatus();toast('Client ID gespeichert');});
+  els.spotifyConnect.addEventListener('click',()=>void startSpotifyAuth());
+  els.copyRedirect.addEventListener('click',async()=>{await copyText(spotifyRedirectUri());toast('Redirect URI kopiert');});
+  els.spotifyClose.addEventListener('click',()=>{els.spotifyHost.innerHTML='';activePreviewProvider=null;currentPreviewTrack=null;els.mini.classList.add('hidden');renderTrackList();});
   window.addEventListener('beforeinstallprompt',e=>{e.preventDefault();deferredInstall=e;els.install.classList.remove('hidden')});els.install.addEventListener('click',async()=>{if(!deferredInstall)return;deferredInstall.prompt();await deferredInstall.userChoice;deferredInstall=null;els.install.classList.add('hidden')});
   if('serviceWorker' in navigator)window.addEventListener('load',()=>navigator.serviceWorker.register('./sw.js').catch(()=>{}));
 })();

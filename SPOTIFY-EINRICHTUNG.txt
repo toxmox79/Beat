@@ -1,0 +1,23 @@
+BeatBridge v1.5 – Spotify-Fallback einrichten
+=============================================
+
+Voraussetzung (aktueller Spotify-Stand):
+- Spotify Premium für den Eigentümer einer Development-Mode-App
+- kostenlose Spotify Developer App mit Web API
+
+1. BeatBridge v1.5 auf deinen HTTPS-Webspace / GitHub Pages hochladen.
+2. BeatBridge öffnen -> "Hörproben & Spotify".
+3. Die angezeigte "Redirect URI" kopieren.
+4. Im Spotify Developer Dashboard eine App anlegen und "Web API" auswählen.
+5. In den App-Einstellungen exakt die kopierte Redirect URI hinzufügen.
+6. Die Client ID der Spotify-App kopieren (NICHT das Client Secret).
+7. Client ID in BeatBridge eintragen -> Speichern -> Verbinden.
+8. Spotify-Zugriff bestätigen. Danach kehrt BeatBridge zur PWA zurück.
+
+Standard-Fallback:
+Beatport -> Spotify -> Apple/iTunes
+
+Hinweis:
+Die Spotify-Suche braucht die Web API nur, um die korrekte Spotify-Track-ID zu finden.
+Die Wiedergabe selbst läuft anschließend als offizieller Spotify Embed direkt innerhalb
+der BeatBridge-PWA. Treffer werden lokal gecacht.
