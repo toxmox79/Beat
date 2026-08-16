@@ -1,11 +1,11 @@
-BeatBridge v1.5 – Spotify-Fallback einrichten
+BeatBridge v1.6 – Spotify-Fallback einrichten
 =============================================
 
 Voraussetzung (aktueller Spotify-Stand):
 - Spotify Premium für den Eigentümer einer Development-Mode-App
 - kostenlose Spotify Developer App mit Web API
 
-1. BeatBridge v1.5 auf deinen HTTPS-Webspace / GitHub Pages hochladen.
+1. BeatBridge v1.6 auf deinen HTTPS-Webspace / GitHub Pages hochladen.
 2. BeatBridge öffnen -> "Hörproben & Spotify".
 3. Die angezeigte "Redirect URI" kopieren.
 4. Im Spotify Developer Dashboard eine App anlegen und "Web API" auswählen.

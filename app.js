@@ -2,7 +2,7 @@
   'use strict';
   const $ = id => document.getElementById(id);
   const els = {
-    install:$('installBtn'), refresh:$('refreshBtn'), source:$('sourceText'), filter:$('filterInput'), clearSearch:$('clearSearchBtn'),
+    install:$('installBtn'), refresh:$('refreshBtn'), source:$('sourceText'), syncStatus:$('syncStatus'), filter:$('filterInput'), clearSearch:$('clearSearchBtn'),
     tabs:$('viewTabs'), chips:$('genreChips'), chartTitle:$('chartTitle'), kicker:$('chartKicker'), heading:$('listHeading'), count:$('trackCount'),
     loading:$('loadingState'), error:$('errorState'), errorTitle:$('errorTitle'), errorText:$('errorText'), retry:$('retryBtn'), empty:$('emptyState'), list:$('trackList'),
     artist:$('artistInput'), title:$('titleInput'), manualPreview:$('manualPreviewBtn'), manualServices:$('manualServices'),
@@ -29,32 +29,39 @@
     ['ytmusic','YouTube Music','Musiksuche'],['youtube','YouTube','Videos & Uploads'],['google','Google','Websuche']
   ];
   const CACHE_MS = 15 * 60 * 1000;
+  const SELECTION_KEY='beatbridge_selection_v16';
+  const STARTUP_SYNC_DELAY=3300; // reader-friendly pacing; avoids anonymous rate-limit bursts
   let state = {genre:GENRES[0], view:'top', tracks:[], selected:null};
   let deferredInstall = null, previewRequestId = 0, currentPreviewTrack = null, activePreviewProvider = null, toastTimer;
+  let refreshAllCycle=0, refreshAllRunning=false;
 
   function toast(msg){ clearTimeout(toastTimer); els.toast.textContent=msg; els.toast.classList.add('show'); toastTimer=setTimeout(()=>els.toast.classList.remove('show'),2200); }
   function normalize(s=''){return String(s).replace(/\s+/g,' ').trim();}
   function esc(s=''){return String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));}
   function formatTime(sec){sec=Number.isFinite(sec)?sec:0;return `${Math.floor(sec/60)}:${String(Math.floor(sec%60)).padStart(2,'0')}`;}
-  function cacheKey(){return `bb13:${state.view}:${state.genre.slug}`;}
+  function cacheKeyFor(view,genre){return `bb16:${view}:${genre.slug}`;}
+  function cacheKey(){return cacheKeyFor(state.view,state.genre);}
   function getCache(){try{const x=JSON.parse(localStorage.getItem(cacheKey()));return x&&Date.now()-x.ts<CACHE_MS?x.data:null}catch{return null}}
   function setCache(data){try{localStorage.setItem(cacheKey(),JSON.stringify({ts:Date.now(),data}))}catch{}}
+  function setCacheFor(view,genre,data){try{localStorage.setItem(cacheKeyFor(view,genre),JSON.stringify({ts:Date.now(),data}))}catch{}}
+  function saveSelection(){if(state.view==='history')return;try{localStorage.setItem(SELECTION_KEY,JSON.stringify({view:state.view,slug:state.genre.slug}))}catch{}}
+  function restoreSelection(){try{const x=JSON.parse(localStorage.getItem(SELECTION_KEY)||'null');if(!x)return;const g=GENRES.find(v=>v.slug===x.slug);if(g)state.genre=g;if(['top','new','hype'].includes(x.view))state.view=x.view;}catch{}}
   function getHistory(){try{return JSON.parse(localStorage.getItem('beatbridge_history_v13')||'[]')}catch{return[]}}
   function remember(track){let h=getHistory().filter(x=>!(x.title===track.title&&x.artist===track.artist));h.unshift({...track,seenAt:Date.now()});h=h.slice(0,80);localStorage.setItem('beatbridge_history_v13',JSON.stringify(h));}
 
-  function beatportUrl(){
-    const g=state.genre;
-    if(state.view==='history') return '';
+  function beatportUrlFor(view,g){
+    if(view==='history') return '';
     if(g.slug==='global') {
-      if(state.view==='top') return 'https://www.beatport.com/top-100';
-      if(state.view==='new') return 'https://www.beatport.com/';
+      if(view==='top') return 'https://www.beatport.com/top-100';
+      if(view==='new') return 'https://www.beatport.com/';
       return 'https://www.beatport.com/top-100';
     }
     const base=`https://www.beatport.com/genre/${g.slug}/${g.id}`;
-    if(state.view==='top') return `${base}/top-100`;
-    if(state.view==='hype') return `${base}/hype-100`;
+    if(view==='top') return `${base}/top-100`;
+    if(view==='hype') return `${base}/hype-100`;
     return `${base}/tracks`;
   }
+  function beatportUrl(){return beatportUrlFor(state.view,state.genre);}
   function heading(){
     if(state.view==='history') return 'Dein Verlauf';
     const base=state.genre.name==='Global'?'Global':state.genre.name;
@@ -68,6 +75,7 @@
     target.innerHTML=SERVICES.map(([id,name,sub])=>`<button data-service="${id}" type="button"><b>${esc(name)}</b>${compact?'':`<small>${esc(sub)}</small>`}</button>`).join('');
   }
   function setStatus(kind,text){els.source.textContent=text;els.source.parentElement.classList.toggle('error',kind==='error');}
+  function setSyncStatus(text='',done=false){if(!els.syncStatus)return;els.syncStatus.textContent=text;els.syncStatus.classList.toggle('done',!!done);els.syncStatus.classList.toggle('hidden',!text);}
   function setLoading(on){els.loading.classList.toggle('hidden',!on);els.list.classList.toggle('hidden',on);els.error.classList.add('hidden');els.empty.classList.add('hidden');}
   function showError(title,text){els.loading.classList.add('hidden');els.list.classList.add('hidden');els.error.classList.remove('hidden');els.errorTitle.textContent=title;els.errorText.textContent=text;setStatus('error','Fallback/Offline');}
 
@@ -120,18 +128,38 @@
   async function loadChart(force=false){
     els.heading.textContent=heading();els.chartTitle.textContent=heading();els.kicker.textContent=state.view==='history'?'LOKAL':'BEATPORT';
     if(state.view==='history'){
-      state.tracks=getHistory();setStatus('ok','Lokal gespeichert');renderTrackList();return;
+      state.tracks=getHistory();setStatus('ok','Lokal gespeichert');renderTrackList();return true;
     }
+    saveSelection();
     setLoading(true);setStatus('ok','Live-Daten werden geladen');
-    if(!force){const c=getCache();if(c&&c.length){state.tracks=c;setStatus('ok','Beatport · zwischengespeichert');renderTrackList();refreshInBackground();return;}}
-    try{state.tracks=await fetchBeatport(beatportUrl());setCache(state.tracks);setStatus('ok','Beatport · live');renderTrackList();}
+    if(!force){const c=getCache();if(c&&c.length){state.tracks=c;setStatus('ok','Beatport · zwischengespeichert');renderTrackList();refreshInBackground();return true;}}
+    try{state.tracks=await fetchBeatport(beatportUrl());setCache(state.tracks);setStatus('ok','Beatport · live');renderTrackList();return true;}
     catch(err){
       const stale=(()=>{try{return JSON.parse(localStorage.getItem(cacheKey())||'null')?.data}catch{return null}})();
-      if(stale&&stale.length){state.tracks=stale;setStatus('error','Beatport · letzter Stand');renderTrackList();toast('Live-Aktualisierung nicht erreichbar');}
-      else showError('Beatport-Liste konnte nicht geladen werden.',`Die PWA darf Beatport nicht direkt einbetten. BeatBridge nutzt deshalb einen Reader für die öffentliche Seite. Dieser war gerade nicht erreichbar (${err.message}).`);
+      if(stale&&stale.length){state.tracks=stale;setStatus('error','Beatport · letzter Stand');renderTrackList();toast('Live-Aktualisierung nicht erreichbar');return false;}
+      showError('Beatport-Liste konnte nicht geladen werden.',`Die PWA darf Beatport nicht direkt einbetten. BeatBridge nutzt deshalb einen Reader für die öffentliche Seite. Dieser war gerade nicht erreichbar (${err.message}).`);return false;
     }
   }
-  async function refreshInBackground(){try{const fresh=await fetchBeatport(beatportUrl());if(fresh.length){state.tracks=fresh;setCache(fresh);setStatus('ok','Beatport · live');renderTrackList();}}catch{}}
+  async function refreshInBackground(){const view=state.view,genre=state.genre,url=beatportUrl();try{const fresh=await fetchBeatport(url);if(fresh.length){setCacheFor(view,genre,fresh);if(state.view===view&&state.genre.slug===genre.slug){state.tracks=fresh;setStatus('ok','Beatport · live');renderTrackList();}}}catch{}}
+  function allChartJobs(){const views=['top','new','hype'],jobs=[];for(const genre of GENRES)for(const view of views)jobs.push({view,genre,url:beatportUrlFor(view,genre),key:cacheKeyFor(view,genre)});return jobs;}
+  function sleep(ms){return new Promise(r=>setTimeout(r,ms));}
+  async function refreshAllChartsInBackground(excludeKey=''){
+    if(refreshAllRunning)return;refreshAllRunning=true;const cycle=++refreshAllCycle;
+    const jobs=allChartJobs().filter(j=>j.key!==excludeKey);const total=jobs.length+(excludeKey?1:0);let done=excludeKey?1:0,ok=excludeKey?1:0;
+    setSyncStatus(`Alle Listen: ${done}/${total} aktualisiert`);
+    for(const job of jobs){
+      if(cycle!==refreshAllCycle)break;
+      try{const fresh=await fetchBeatport(job.url);if(fresh.length){setCacheFor(job.view,job.genre,fresh);ok++;}}catch{}
+      done++;setSyncStatus(`Alle Listen: ${done}/${total} aktualisiert`);
+      if(done<total)await sleep(STARTUP_SYNC_DELAY);
+    }
+    if(cycle===refreshAllCycle)setSyncStatus(`Alle Listen aktualisiert · ${ok}/${total}`,true);
+    refreshAllRunning=false;
+  }
+  async function refreshSelectedThenAll(){
+    if(state.view==='history'){loadChart();void refreshAllChartsInBackground('');return;}
+    const firstKey=cacheKey();setSyncStatus('Ausgewählte Liste wird zuerst aktualisiert …');await loadChart(true);setSyncStatus('Ausgewählte Liste aktuell · weitere Listen folgen');void refreshAllChartsInBackground(firstKey);
+  }
 
   function filteredTracks(){const q=normalize(els.filter.value).toLowerCase();if(!q)return state.tracks;return state.tracks.filter(t=>`${t.title} ${t.artist} ${t.label} ${t.release}`.toLowerCase().includes(q));}
   function renderTrackList(){
@@ -161,7 +189,7 @@
   const SPOTIFY_CLIENT_KEY='beatbridge_spotify_client_v15';
   const SPOTIFY_TOKEN_KEY='beatbridge_spotify_token_v15';
   const SPOTIFY_MATCH_KEY='beatbridge_spotify_matches_v15';
-  const PRIORITY_KEY='beatbridge_preview_priority_v15';
+  const PRIORITY_KEY='beatbridge_preview_priority_v16';
   function spotifyClientId(){return normalize(localStorage.getItem(SPOTIFY_CLIENT_KEY)||'');}
   function spotifyRedirectUri(){const u=new URL(location.href);u.search='';u.hash='';return u.href;}
   function readSpotifyToken(){try{return JSON.parse(localStorage.getItem(SPOTIFY_TOKEN_KEY)||'null')}catch{return null}}
@@ -237,7 +265,7 @@
     const data=await itunesSearch(`${track.artist} ${track.title}`),results=(data.results||[]).filter(r=>r.previewUrl).sort((a,b)=>scoreAppleResult(b,track)-scoreAppleResult(a,track));if(!results.length)return null;
     const r=results[0],s=scoreAppleResult(r,track);return {url:r.previewUrl,artwork:(r.artworkUrl100||'').replace('100x100bb','300x300bb'),name:r.trackName||track.title,artist:r.artistName||track.artist,matchText:s>.78?'sehr guter Treffer':s>.58?'wahrscheinlicher Treffer':'möglicher Treffer'};
   }
-  function previewPriority(){const raw=els.previewPriority?.value||localStorage.getItem(PRIORITY_KEY)||'beatport,spotify,apple';return raw.split(',').filter(x=>['beatport','spotify','apple'].includes(x));}
+  function previewPriority(){const raw=els.previewPriority?.value||localStorage.getItem(PRIORITY_KEY)||'beatport,spotify';return raw.split(',').filter(x=>['beatport','spotify','apple'].includes(x));}
   async function previewTrack(track,btn=null){
     if(!track?.title)return;if(btn)btn.classList.add('loading');remember(track);const request=++previewRequestId;
     try{
@@ -318,16 +346,17 @@
   }
 
   async function init(){
-    renderGenres();renderServices(els.sheetServices,false);renderServices(els.manualServices,true);
-    const savedPriority=localStorage.getItem(PRIORITY_KEY)||'beatport,spotify,apple';if([...els.previewPriority.options].some(o=>o.value===savedPriority))els.previewPriority.value=savedPriority;
-    updateSpotifyStatus();await handleSpotifyCallback();loadShareTarget();loadChart();
+    restoreSelection();renderGenres();renderServices(els.sheetServices,false);renderServices(els.manualServices,true);
+    document.querySelectorAll('.view-tab').forEach(x=>x.classList.toggle('active',x.dataset.view===state.view));
+    const savedPriority=localStorage.getItem(PRIORITY_KEY)||'beatport,spotify';if([...els.previewPriority.options].some(o=>o.value===savedPriority))els.previewPriority.value=savedPriority;
+    updateSpotifyStatus();await handleSpotifyCallback();loadShareTarget();void refreshSelectedThenAll();
   }
   void init();
 
-  els.chips.addEventListener('click',e=>{const b=e.target.closest('[data-slug]');if(!b)return;state.genre=GENRES.find(g=>g.slug===b.dataset.slug)||GENRES[0];renderGenres();if(state.view==='history'){state.view='top';document.querySelectorAll('.view-tab').forEach(x=>x.classList.toggle('active',x.dataset.view==='top'));}loadChart();});
-  els.tabs.addEventListener('click',e=>{const b=e.target.closest('[data-view]');if(!b)return;state.view=b.dataset.view;document.querySelectorAll('.view-tab').forEach(x=>x.classList.toggle('active',x===b));loadChart();});
+  els.chips.addEventListener('click',e=>{const b=e.target.closest('[data-slug]');if(!b)return;state.genre=GENRES.find(g=>g.slug===b.dataset.slug)||GENRES[0];renderGenres();if(state.view==='history'){state.view='top';document.querySelectorAll('.view-tab').forEach(x=>x.classList.toggle('active',x.dataset.view==='top'));}saveSelection();loadChart();});
+  els.tabs.addEventListener('click',e=>{const b=e.target.closest('[data-view]');if(!b)return;state.view=b.dataset.view;document.querySelectorAll('.view-tab').forEach(x=>x.classList.toggle('active',x===b));saveSelection();loadChart();});
   els.filter.addEventListener('input',renderTrackList);els.clearSearch.addEventListener('click',()=>{els.filter.value='';renderTrackList();els.filter.focus();});
-  els.retry.addEventListener('click',()=>loadChart(true));els.refresh.addEventListener('click',()=>{if(state.view==='history')loadChart();else loadChart(true)});
+  els.retry.addEventListener('click',()=>loadChart(true));els.refresh.addEventListener('click',()=>void refreshSelectedThenAll());
   els.list.addEventListener('click',e=>{const row=e.target.closest('.track-row');if(!row)return;const track=state.tracks[Number(row.dataset.index)];const action=e.target.closest('[data-action]')?.dataset.action;if(action==='play')previewTrack(track,e.target.closest('button'));if(action==='more')openSheet(track);});
   [els.backdrop,els.sheetClose].forEach(x=>x.addEventListener('click',closeSheet));
   els.sheetServices.addEventListener('click',e=>{const b=e.target.closest('[data-service]');if(b&&state.selected)openService(b.dataset.service,state.selected);});

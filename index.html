@@ -31,7 +31,7 @@
           <div class="eyebrow">BEATPORT DIGGING</div>
           <h1>Entdecken. Reinhören.<br><span>Direkt weiter.</span></h1>
         </div>
-        <div class="source-pill"><i></i><span id="sourceText">Live-Daten werden geladen</span></div>
+        <div class="source-block"><div class="source-pill"><i></i><span id="sourceText">Live-Daten werden geladen</span></div><div id="syncStatus" class="sync-status hidden"></div></div>
       </section>
 
       <section class="search-wrap">
@@ -95,10 +95,10 @@
           <div class="settings-body">
             <label class="field-label" for="previewPriority">Hörproben-Reihenfolge</label>
             <select id="previewPriority" class="settings-select">
-              <option value="beatport,spotify,apple">Beatport → Spotify → Apple</option>
-              <option value="beatport,apple,spotify">Beatport → Apple → Spotify</option>
-              <option value="spotify,beatport,apple">Spotify → Beatport → Apple</option>
-              <option value="apple,spotify,beatport">Apple → Spotify → Beatport</option>
+              <option value="beatport,spotify">Beatport → Spotify</option>
+              <option value="spotify,beatport">Spotify → Beatport</option>
+              <option value="beatport,spotify,apple">Beatport → Spotify → Apple/iTunes (Notfall)</option>
+              <option value="spotify,beatport,apple">Spotify → Beatport → Apple/iTunes (Notfall)</option>
             </select>
 
             <div class="spotify-connect">
@@ -116,7 +116,7 @@
                 <code id="spotifyRedirectUri">–</code>
                 <button id="copyRedirectBtn" class="text-btn" type="button">URI kopieren</button>
               </div>
-              <p class="settings-note">Für die automatische Spotify-Suche ist einmalig eine Spotify-Developer-App nötig. Ohne Verbindung wird Spotify übersprungen und BeatBridge nutzt die nächste Hörprobenquelle.</p>
+              <p class="settings-note">Spotify ist jetzt die bevorzugte Fallback-Quelle. Für die automatische Suche ist einmalig eine Spotify-Developer-App nötig. Apple/iTunes ist standardmäßig deaktiviert und kann nur noch als Notfall-Fallback zugeschaltet werden.</p>
             </div>
           </div>
         </details>
@@ -124,7 +124,7 @@
     </main>
 
     <footer>
-      <span>BeatBridge zeigt öffentliche Beatport-Metadaten in einer eigenen Oberfläche. Hörproben werden separat gematcht.</span>
+      <span>BeatBridge zeigt öffentliche Beatport-Metadaten in einer eigenen Oberfläche. Beim Start wird zuerst die gewählte Liste und danach der restliche Listen-Cache aktualisiert.</span>
     </footer>
   </div>
 
