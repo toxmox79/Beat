@@ -3,9 +3,9 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
-  <meta name="theme-color" content="#0b0d12" />
+  <meta name="theme-color" content="#0a0d0c" />
   <meta name="color-scheme" content="dark" />
-  <meta name="description" content="Beatport-Tracks schnell in SimpMusic, SoundCloud, Spotify, YouTube und YouTube Music suchen." />
+  <meta name="description" content="BeatBridge – Beatport-Charts in einer PWA durchsuchen, vorhören und in Musikdiensten öffnen." />
   <title>BeatBridge</title>
   <link rel="manifest" href="./manifest.webmanifest" />
   <link rel="icon" href="./icons/icon-192.png" />
@@ -16,168 +16,115 @@
   <div class="app-shell">
     <header class="topbar">
       <div class="brand">
-        <div class="brand-mark" aria-hidden="true">B</div>
-        <div>
-          <strong>BeatBridge</strong>
-          <span>Beatport → deine Musik-Apps</span>
-        </div>
+        <div class="brand-mark">B</div>
+        <div><strong>BeatBridge</strong><span>DJ Music Finder</span></div>
       </div>
-      <button id="installBtn" class="icon-btn hidden" type="button" aria-label="App installieren" title="App installieren">＋</button>
+      <div class="top-actions">
+        <button id="refreshBtn" class="icon-btn" type="button" aria-label="Aktualisieren">↻</button>
+        <button id="installBtn" class="icon-btn hidden" type="button" aria-label="Installieren">＋</button>
+      </div>
     </header>
 
     <main>
-      <section class="hero card">
-        <div class="eyebrow">QUELLE</div>
-        <h1>Track auf Beatport finden.<br><span>Überall öffnen.</span></h1>
-        <p>Öffne Beatport, teile einen Track an BeatBridge oder gib Artist und Titel direkt ein.</p>
-        <div class="hero-actions">
-          <button id="openBeatportBtn" class="primary-btn" type="button">Beatport öffnen</button>
-          <button id="pasteBtn" class="secondary-btn" type="button">Zwischenablage lesen</button>
+      <section class="discover-head">
+        <div>
+          <div class="eyebrow">BEATPORT DIGGING</div>
+          <h1>Entdecken. Reinhören.<br><span>Direkt weiter.</span></h1>
         </div>
+        <div class="source-pill"><i></i><span id="sourceText">Live-Daten werden geladen</span></div>
       </section>
 
-      <section class="card editor-card">
-        <div class="section-head">
+      <section class="search-wrap">
+        <span>⌕</span>
+        <input id="filterInput" type="search" autocomplete="off" placeholder="In der geladenen Liste suchen …" />
+        <button id="clearSearchBtn" class="clear-search hidden" type="button">×</button>
+      </section>
+
+      <nav id="viewTabs" class="view-tabs" aria-label="Beatport Bereich">
+        <button class="view-tab active" data-view="top" type="button">Top 100</button>
+        <button class="view-tab" data-view="new" type="button">Neu</button>
+        <button class="view-tab" data-view="hype" type="button">Hype</button>
+        <button class="view-tab" data-view="history" type="button">Verlauf</button>
+      </nav>
+
+      <section class="genres-section">
+        <div class="section-row"><h2>Genres</h2><span id="chartTitle">Global Top 100</span></div>
+        <div id="genreChips" class="genre-chips"></div>
+      </section>
+
+      <section class="chart-section">
+        <div class="chart-head">
           <div>
-            <div class="eyebrow">TRACK</div>
-            <h2>Was möchtest du öffnen?</h2>
+            <span class="chart-kicker" id="chartKicker">BEATPORT</span>
+            <h2 id="listHeading">Global Top 100</h2>
           </div>
-          <button id="clearBtn" class="text-btn" type="button">Leeren</button>
+          <span id="trackCount" class="track-count">–</span>
         </div>
 
-        <label class="field">
-          <span>Artist</span>
-          <input id="artistInput" autocomplete="off" placeholder="z. B. Charlotte de Witte" />
-        </label>
-        <label class="field">
-          <span>Titel / Mix</span>
-          <input id="titleInput" autocomplete="off" placeholder="z. B. Roar (Original Mix)" />
-        </label>
-        <label class="field compact-field">
-          <span>Beatport-Link <small>(optional)</small></span>
-          <input id="urlInput" inputmode="url" autocomplete="off" placeholder="https://www.beatport.com/track/..." />
-        </label>
+        <div id="loadingState" class="loading-state">
+          <span class="spinner"></span>
+          <strong>Beatport-Liste wird geladen …</strong>
+          <small>Beim ersten Aufruf kann das einige Sekunden dauern.</small>
+        </div>
 
-        <div id="queryPreview" class="query-preview" aria-live="polite">Noch kein Track ausgewählt.</div>
+        <div id="errorState" class="error-state hidden">
+          <strong id="errorTitle">Liste konnte nicht geladen werden.</strong>
+          <p id="errorText"></p>
+          <button id="retryBtn" class="primary-btn" type="button">Erneut versuchen</button>
+        </div>
+
+        <div id="emptyState" class="empty-state hidden">Keine passenden Tracks gefunden.</div>
+        <div id="trackList" class="track-list hidden"></div>
       </section>
 
-      <section class="card preview-card">
-        <div class="section-head preview-head">
-          <div>
-            <div class="eyebrow">HÖRPROBE</div>
-            <h2>Direkt reinhören</h2>
+      <section class="manual-card">
+        <details>
+          <summary>Track manuell suchen</summary>
+          <div class="manual-grid">
+            <input id="artistInput" placeholder="Artist" autocomplete="off" />
+            <input id="titleInput" placeholder="Titel / Mix" autocomplete="off" />
+            <button id="manualPreviewBtn" class="primary-btn" type="button">▶ Hörprobe</button>
           </div>
-          <button id="findPreviewBtn" class="preview-search-btn" type="button">Hörprobe suchen</button>
-        </div>
-
-        <div id="previewEmpty" class="preview-empty">
-          <div class="wave-mini" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i><i></i><i></i></div>
-          <span>Artist und Titel eingeben und die Hörprobe starten.</span>
-        </div>
-
-        <div id="previewLoading" class="preview-loading hidden" aria-live="polite">
-          <span class="spinner" aria-hidden="true"></span> Suche passende Hörprobe …
-        </div>
-
-        <div id="previewPlayer" class="preview-player hidden">
-          <div class="preview-track">
-            <img id="previewArtwork" class="preview-artwork" alt="Cover" />
-            <div class="preview-meta">
-              <strong id="previewTitle">–</strong>
-              <span id="previewArtist">–</span>
-              <small id="previewMatch">Hörprobe</small>
-            </div>
-            <div id="previewResultNav" class="preview-result-nav hidden">
-              <button id="prevResultBtn" class="mini-icon-btn" type="button" aria-label="Vorheriger Treffer">‹</button>
-              <span id="resultCounter">1/1</span>
-              <button id="nextResultBtn" class="mini-icon-btn" type="button" aria-label="Nächster Treffer">›</button>
-            </div>
-          </div>
-
-          <div class="transport">
-            <button id="previewPlayBtn" class="play-btn" type="button" aria-label="Hörprobe abspielen">▶</button>
-            <div class="timeline-wrap">
-              <input id="previewSeek" class="seek" type="range" min="0" max="30" step="0.05" value="0" aria-label="Position in der Hörprobe" />
-              <div class="time-row"><span id="previewCurrent">0:00</span><span id="previewDuration">0:30</span></div>
-            </div>
-          </div>
-
-          <div class="preview-source">
-            <span>30-Sekunden-Hörprobe · Provided courtesy of iTunes</span>
-            <a id="previewStoreLink" href="#" target="_blank" rel="noopener noreferrer">Im iTunes Store öffnen</a>
-          </div>
-          <audio id="previewAudio" preload="metadata"></audio>
-        </div>
-
-        <div id="previewError" class="preview-error hidden" aria-live="polite"></div>
-      </section>
-
-      <section class="card destinations-card">
-        <div class="section-head">
-          <div>
-            <div class="eyebrow">ÖFFNEN MIT</div>
-            <h2>Deine Dienste</h2>
-          </div>
-        </div>
-
-        <div class="service-grid">
-          <button class="service service-simp" data-service="simpmusic" type="button">
-            <span class="service-icon">S</span><span><b>SimpMusic</b><small>Suche kopieren & App öffnen</small></span>
-          </button>
-          <button class="service" data-service="soundcloud" type="button">
-            <span class="service-icon">SC</span><span><b>SoundCloud</b><small>Tracks & Bootlegs suchen</small></span>
-          </button>
-          <button class="service" data-service="spotify" type="button">
-            <span class="service-icon">●</span><span><b>Spotify</b><small>Suche öffnen</small></span>
-          </button>
-          <button class="service" data-service="ytmusic" type="button">
-            <span class="service-icon">♪</span><span><b>YouTube Music</b><small>Musiksuche öffnen</small></span>
-          </button>
-          <button class="service" data-service="youtube" type="button">
-            <span class="service-icon">▶</span><span><b>YouTube</b><small>Videos & Uploads suchen</small></span>
-          </button>
-          <button class="service" data-service="google" type="button">
-            <span class="service-icon">G</span><span><b>Google</b><small>Websuche öffnen</small></span>
-          </button>
-        </div>
-
-        <label class="toggle-row">
-          <input id="extendedToggle" type="checkbox" />
-          <span><b>DJ-Suche erweitern</b><small>ergänzt „extended mix“ bei SoundCloud/YouTube, wenn keine Mix-Bezeichnung vorhanden ist</small></span>
-        </label>
-      </section>
-
-      <section class="card share-card">
-        <div class="eyebrow">ANDROID-TIPP</div>
-        <h2>Am schnellsten über „Teilen“</h2>
-        <p>Installiere BeatBridge als App. Öffne danach einen Beatport-Track im Browser und wähle <b>Teilen → BeatBridge</b>. Titel und Link werden übernommen, soweit Android/Browser sie mitsendet.</p>
-      </section>
-
-      <section id="historySection" class="card history-card hidden">
-        <div class="section-head">
-          <div><div class="eyebrow">VERLAUF</div><h2>Zuletzt verwendet</h2></div>
-          <button id="clearHistoryBtn" class="text-btn" type="button">Löschen</button>
-        </div>
-        <div id="historyList" class="history-list"></div>
+          <div class="manual-services" id="manualServices"></div>
+        </details>
       </section>
     </main>
 
     <footer>
-      <span>BeatBridge arbeitet ohne API-Key. Die Musik wird immer beim gewählten Dienst geöffnet.</span>
+      <span>BeatBridge zeigt öffentliche Beatport-Metadaten in einer eigenen Oberfläche. Hörproben werden separat gematcht.</span>
     </footer>
   </div>
+
+  <aside id="serviceSheet" class="service-sheet hidden" aria-hidden="true">
+    <button id="sheetBackdrop" class="sheet-backdrop" type="button" aria-label="Schließen"></button>
+    <div class="sheet-panel">
+      <div class="sheet-handle"></div>
+      <div class="sheet-track">
+        <div>
+          <small>ÖFFNEN MIT</small>
+          <strong id="sheetTitle">–</strong>
+          <span id="sheetArtist">–</span>
+        </div>
+        <button id="sheetClose" class="sheet-close" type="button">×</button>
+      </div>
+      <div id="sheetServices" class="sheet-services"></div>
+      <label class="toggle-row"><input id="extendedToggle" type="checkbox"><span><b>DJ-Suche erweitern</b><small>ergänzt „extended mix“, wenn keine Mix-Bezeichnung vorhanden ist</small></span></label>
+    </div>
+  </aside>
 
   <aside id="miniPlayer" class="mini-player hidden" aria-label="Aktuelle Hörprobe">
     <div class="mini-player-inner">
       <img id="miniArtwork" class="mini-artwork" alt="Cover" />
-      <button id="miniExpandBtn" class="mini-meta" type="button" aria-label="Hörprobe anzeigen">
+      <button id="miniMeta" class="mini-meta" type="button">
         <strong id="miniTitle">–</strong>
         <span id="miniArtist">–</span>
-        <small><span id="miniCurrent">0:00</span> / <span id="miniDuration">0:30</span></small>
+        <small id="miniMatch">Hörprobe</small>
       </button>
+      <span id="miniTime" class="mini-time">0:00</span>
       <button id="miniPlayBtn" class="mini-play-btn" type="button" aria-label="Hörprobe abspielen">▶</button>
     </div>
-    <input id="miniSeek" class="mini-seek" type="range" min="0" max="30" step="0.05" value="0" aria-label="Position in der Hörprobe" />
+    <input id="miniSeek" class="mini-seek" type="range" min="0" max="30" step="0.05" value="0" aria-label="Position" />
+    <audio id="previewAudio" preload="metadata"></audio>
   </aside>
 
   <div id="toast" class="toast" role="status" aria-live="polite"></div>

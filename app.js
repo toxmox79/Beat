@@ -1,550 +1,209 @@
 (() => {
   'use strict';
-
-  const $ = (id) => document.getElementById(id);
+  const $ = id => document.getElementById(id);
   const els = {
-    artist: $('artistInput'), title: $('titleInput'), url: $('urlInput'), preview: $('queryPreview'),
-    install: $('installBtn'), toast: $('toast'), extended: $('extendedToggle'),
-    historySection: $('historySection'), historyList: $('historyList'),
-    previewEmpty: $('previewEmpty'), previewLoading: $('previewLoading'), previewPlayer: $('previewPlayer'),
-    previewError: $('previewError'), previewAudio: $('previewAudio'), previewPlay: $('previewPlayBtn'),
-    previewSeek: $('previewSeek'), previewCurrent: $('previewCurrent'), previewDuration: $('previewDuration'),
-    previewArtwork: $('previewArtwork'), previewTitle: $('previewTitle'), previewArtist: $('previewArtist'),
-    previewMatch: $('previewMatch'), previewStoreLink: $('previewStoreLink'), previewResultNav: $('previewResultNav'),
-    resultCounter: $('resultCounter'), prevResult: $('prevResultBtn'), nextResult: $('nextResultBtn'), findPreview: $('findPreviewBtn'),
-    miniPlayer: $('miniPlayer'), miniArtwork: $('miniArtwork'), miniTitle: $('miniTitle'), miniArtist: $('miniArtist'),
-    miniCurrent: $('miniCurrent'), miniDuration: $('miniDuration'), miniPlay: $('miniPlayBtn'), miniSeek: $('miniSeek'),
-    miniExpand: $('miniExpandBtn')
+    install:$('installBtn'), refresh:$('refreshBtn'), source:$('sourceText'), filter:$('filterInput'), clearSearch:$('clearSearchBtn'),
+    tabs:$('viewTabs'), chips:$('genreChips'), chartTitle:$('chartTitle'), kicker:$('chartKicker'), heading:$('listHeading'), count:$('trackCount'),
+    loading:$('loadingState'), error:$('errorState'), errorTitle:$('errorTitle'), errorText:$('errorText'), retry:$('retryBtn'), empty:$('emptyState'), list:$('trackList'),
+    artist:$('artistInput'), title:$('titleInput'), manualPreview:$('manualPreviewBtn'), manualServices:$('manualServices'),
+    sheet:$('serviceSheet'), backdrop:$('sheetBackdrop'), sheetClose:$('sheetClose'), sheetTitle:$('sheetTitle'), sheetArtist:$('sheetArtist'), sheetServices:$('sheetServices'), extended:$('extendedToggle'),
+    mini:$('miniPlayer'), miniArt:$('miniArtwork'), miniTitle:$('miniTitle'), miniArtist:$('miniArtist'), miniMatch:$('miniMatch'), miniTime:$('miniTime'), miniPlay:$('miniPlayBtn'), miniSeek:$('miniSeek'), audio:$('previewAudio'), toast:$('toast')
   };
 
-  let deferredInstallPrompt = null;
-  const HISTORY_KEY = 'beatbridge-history-v1';
-  let previewResults = [];
-  let previewIndex = 0;
-  let previewRequestId = 0;
-  let currentPreview = null;
+  const GENRES = [
+    {name:'Global',slug:'global',id:null},
+    {name:'Hard Techno',slug:'hard-techno',id:2},
+    {name:'Techno',slug:'techno-peak-time-driving',id:6},
+    {name:'Tech House',slug:'tech-house',id:11},
+    {name:'House',slug:'house',id:5},
+    {name:'Melodic H&T',slug:'melodic-house-techno',id:90},
+    {name:'Deep House',slug:'deep-house',id:12},
+    {name:'Progressive',slug:'progressive-house',id:15},
+    {name:'Drum & Bass',slug:'drum-bass',id:1},
+    {name:'Organic House',slug:'organic-house',id:93}
+  ];
+  const SERVICES = [
+    ['simpmusic','SimpMusic','App öffnen'],['soundcloud','SoundCloud','Tracks & Bootlegs'],['spotify','Spotify','Suche'],
+    ['ytmusic','YouTube Music','Musiksuche'],['youtube','YouTube','Videos & Uploads'],['google','Google','Websuche']
+  ];
+  const CACHE_MS = 15 * 60 * 1000;
+  let state = {genre:GENRES[0], view:'top', tracks:[], selected:null};
+  let deferredInstall = null, previewRequestId = 0, currentPreviewTrack = null, toastTimer;
 
-  function normalize(s = '') { return String(s).replace(/\s+/g, ' ').trim(); }
+  function toast(msg){ clearTimeout(toastTimer); els.toast.textContent=msg; els.toast.classList.add('show'); toastTimer=setTimeout(()=>els.toast.classList.remove('show'),2200); }
+  function normalize(s=''){return String(s).replace(/\s+/g,' ').trim();}
+  function esc(s=''){return String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));}
+  function formatTime(sec){sec=Number.isFinite(sec)?sec:0;return `${Math.floor(sec/60)}:${String(Math.floor(sec%60)).padStart(2,'0')}`;}
+  function cacheKey(){return `bb13:${state.view}:${state.genre.slug}`;}
+  function getCache(){try{const x=JSON.parse(localStorage.getItem(cacheKey()));return x&&Date.now()-x.ts<CACHE_MS?x.data:null}catch{return null}}
+  function setCache(data){try{localStorage.setItem(cacheKey(),JSON.stringify({ts:Date.now(),data}))}catch{}}
+  function history(){try{return JSON.parse(localStorage.getItem('beatbridge_history_v13')||'[]')}catch{return[]}}
+  function remember(track){let h=history().filter(x=>!(x.title===track.title&&x.artist===track.artist));h.unshift({...track,seenAt:Date.now()});h=h.slice(0,80);localStorage.setItem('beatbridge_history_v13',JSON.stringify(h));}
 
-  function query() {
-    return normalize([els.artist.value, els.title.value].filter(Boolean).join(' - '));
-  }
-
-  function serviceQuery(service) {
-    let q = query();
-    if (!q) return '';
-    if (els.extended.checked && ['soundcloud', 'youtube', 'ytmusic'].includes(service) && !/(mix|remix|edit|version|bootleg|rework)/i.test(q)) {
-      q += ' extended mix';
+  function beatportUrl(){
+    const g=state.genre;
+    if(state.view==='history') return '';
+    if(g.slug==='global') {
+      if(state.view==='top') return 'https://www.beatport.com/top-100';
+      if(state.view==='new') return 'https://www.beatport.com/';
+      return 'https://www.beatport.com/top-100';
     }
-    return q;
+    const base=`https://www.beatport.com/genre/${g.slug}/${g.id}`;
+    if(state.view==='top') return `${base}/top-100`;
+    if(state.view==='hype') return `${base}/hype-100`;
+    return `${base}/tracks`;
+  }
+  function heading(){
+    if(state.view==='history') return 'Dein Verlauf';
+    const base=state.genre.name==='Global'?'Global':state.genre.name;
+    return `${base} ${state.view==='top'?'Top 100':state.view==='hype'?'Hype 100':'Neue Tracks'}`;
   }
 
-  function updatePreview() {
-    const q = query();
-    els.preview.textContent = q ? `Suche: ${q}` : 'Noch kein Track ausgewählt.';
+  function renderGenres(){
+    els.chips.innerHTML=GENRES.map(g=>`<button class="genre-chip ${g.slug===state.genre.slug?'active':''}" data-slug="${g.slug}" type="button">${esc(g.name)}</button>`).join('');
   }
-
-  function toast(msg) {
-    els.toast.textContent = msg;
-    els.toast.classList.add('show');
-    clearTimeout(toast._t);
-    toast._t = setTimeout(() => els.toast.classList.remove('show'), 2300);
+  function renderServices(target, compact=false){
+    target.innerHTML=SERVICES.map(([id,name,sub])=>`<button data-service="${id}" type="button"><b>${esc(name)}</b>${compact?'':`<small>${esc(sub)}</small>`}</button>`).join('');
   }
+  function setStatus(kind,text){els.source.textContent=text;els.source.parentElement.classList.toggle('error',kind==='error');}
+  function setLoading(on){els.loading.classList.toggle('hidden',!on);els.list.classList.toggle('hidden',on);els.error.classList.add('hidden');els.empty.classList.add('hidden');}
+  function showError(title,text){els.loading.classList.add('hidden');els.list.classList.add('hidden');els.error.classList.remove('hidden');els.errorTitle.textContent=title;els.errorText.textContent=text;setStatus('error','Fallback/Offline');}
 
-  function parseSharedText(raw = '') {
-    let text = String(raw).replace(/\+/g, ' ');
-    try { text = decodeURIComponent(text); } catch {}
-    text = normalize(text);
-    if (!text) return {};
-    const urlMatch = text.match(/https?:\/\/[^\s]+/i);
-    const url = urlMatch ? urlMatch[0] : '';
-    let s = normalize(text.replace(url || '', ''));
-    s = s.replace(/\s*[|–-]\s*Beatport.*$/i, '').replace(/\bon Beatport\b.*$/i, '').trim();
-
-    let m = s.match(/^(.+?)\s+by\s+(.+?)$/i);
-    if (m) return { title: normalize(m[1]), artist: normalize(m[2]), url };
-
-    m = s.match(/^(.+?)\s+[–—-]\s+(.+)$/);
-    if (m) return { artist: normalize(m[1]), title: normalize(m[2]), url };
-
-    return { title: s, url };
-  }
-
-  function titleFromBeatportUrl(url = '') {
-    try {
-      const u = new URL(url);
-      if (!/beatport\.com$/i.test(u.hostname) && !/\.beatport\.com$/i.test(u.hostname)) return '';
-      const m = u.pathname.match(/\/track\/([^/]+)/i);
-      if (!m) return '';
-      return m[1].replace(/-/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
-    } catch { return ''; }
-  }
-
-  function applyData(data, overwrite = true) {
-    if (!data) return;
-    if (data.artist && (overwrite || !els.artist.value)) els.artist.value = data.artist;
-    if (data.title && (overwrite || !els.title.value)) els.title.value = data.title;
-    if (data.url && (overwrite || !els.url.value)) els.url.value = data.url;
-    if (!els.title.value && els.url.value) els.title.value = titleFromBeatportUrl(els.url.value);
-    updatePreview();
-  }
-
-  function loadShareTarget() {
-    const p = new URLSearchParams(location.search);
-    const sharedTitle = p.get('title') || '';
-    const sharedText = p.get('text') || '';
-    const sharedUrl = p.get('url') || '';
-    if (!(sharedTitle || sharedText || sharedUrl)) return;
-
-    const a = parseSharedText(sharedTitle);
-    const b = parseSharedText(sharedText);
-    const merged = {
-      artist: a.artist || b.artist || '',
-      title: a.title || b.title || '',
-      url: sharedUrl || b.url || a.url || ''
-    };
-    applyData(merged, true);
-    if (merged.title || merged.url) toast('Von „Teilen“ übernommen');
-    history.replaceState({}, '', location.pathname);
-  }
-
-  function openUrl(url) {
-    const w = window.open(url, '_blank', 'noopener,noreferrer');
-    if (!w) location.href = url;
-  }
-
-  async function copyText(text) {
-    try { await navigator.clipboard.writeText(text); return true; }
-    catch {
-      const ta = document.createElement('textarea');
-      ta.value = text; ta.style.position = 'fixed'; ta.style.opacity = '0';
-      document.body.appendChild(ta); ta.select();
-      const ok = document.execCommand('copy'); ta.remove(); return ok;
-    }
-  }
-
-  async function openService(service) {
-    const q = serviceQuery(service);
-    if (!q) { toast('Bitte Artist oder Titel eingeben'); els.artist.focus(); return; }
-    rememberCurrent();
-    const e = encodeURIComponent(q);
-
-    switch (service) {
-      case 'soundcloud': openUrl(`https://soundcloud.com/search?q=${e}`); break;
-      case 'spotify': openUrl(`https://open.spotify.com/search/${e}`); break;
-      case 'youtube': openUrl(`https://www.youtube.com/results?search_query=${e}`); break;
-      case 'ytmusic': openUrl(`https://music.youtube.com/search?q=${e}`); break;
-      case 'google': openUrl(`https://www.google.com/search?q=${e}`); break;
-      case 'simpmusic': {
-        await copyText(q);
-        toast('Suche kopiert – in SimpMusic einfügen');
-        setTimeout(() => { location.href = 'simpmusic://'; }, 120);
-        setTimeout(() => {
-          if (document.visibilityState === 'visible') openUrl('https://simpmusic.org/');
-        }, 1000);
-        break;
+  function parseLink(line){const m=line.match(/\[([^\]]+)\]\((https?:\/\/[^)]+)\)/);return m?{text:normalize(m[1]),url:m[2]}:null;}
+  function parseBeatportMarkdown(md){
+    const lines=String(md||'').split(/\r?\n/).map(normalize).filter(Boolean);
+    const tracks=[]; const seen=new Set();
+    for(let i=0;i<lines.length;i++){
+      const line=lines[i];
+      const all=[...line.matchAll(/\[([^\]]+)\]\((https?:\/\/[^)]*beatport\.com\/track\/[^)]+)\)/gi)];
+      if(!all.length) continue;
+      for(const m of all){
+        const title=normalize(m[1]); const url=m[2];
+        if(!title||title.length>180||seen.has(url)) continue;
+        seen.add(url);
+        const vicinity=lines.slice(Math.max(0,i-2),Math.min(lines.length,i+8)).join(' ');
+        const artists=[];
+        for(const am of vicinity.matchAll(/\[([^\]]+)\]\(https?:\/\/[^)]*beatport\.com\/artist\/[^)]+\)/gi)){
+          const a=normalize(am[1]); if(a&&!artists.includes(a)&&a.length<90) artists.push(a);
+        }
+        let rank=null;
+        const rankText=lines.slice(Math.max(0,i-2),i+1).join(' ');
+        const rm=rankText.match(/(?:^|\s)(\d{1,3})[.)]?\s/); if(rm) rank=Number(rm[1]);
+        const bpm=(vicinity.match(/\b(\d{2,3})\s*BPM\b/i)||[])[1]||'';
+        const key=(vicinity.match(/\b([A-G](?:#|b)?\s+(?:Major|Minor))\b/i)||[])[1]||'';
+        let label=''; const lm=vicinity.match(/\[([^\]]+)\]\(https?:\/\/[^)]*beatport\.com\/label\/[^)]+\)/i); if(lm) label=normalize(lm[1]);
+        let release=''; const rel=vicinity.match(/\[([^\]]+)\]\(https?:\/\/[^)]*beatport\.com\/release\/[^)]+\)/i); if(rel) release=normalize(rel[1]);
+        tracks.push({rank:rank||tracks.length+1,title,artist:artists.join(', ')||'Unbekannter Artist',bpm,key,label,release,url});
       }
     }
+    const dedupe=[];const sig=new Set();
+    for(const t of tracks){const s=(t.artist+'|'+t.title).toLowerCase();if(sig.has(s))continue;sig.add(s);dedupe.push(t);}
+    return dedupe.slice(0,100).map((t,i)=>({...t,rank:t.rank||i+1}));
   }
 
-  function cleanForMatch(s = '') {
-    return normalize(s)
-      .toLowerCase()
-      .normalize('NFD').replace(/[\u0300-\u036f]/g, '')
-      .replace(/\b(original|extended|radio|club|mix|remix|edit|version|rework|bootleg)\b/g, ' ')
-      .replace(/[^a-z0-9]+/g, ' ')
-      .replace(/\s+/g, ' ').trim();
+  async function fetchBeatport(url){
+    // Jina Reader renders public webpages and avoids the iframe/CORS limitation of a pure PWA.
+    const reader=`https://r.jina.ai/${url}`;
+    const ctl=new AbortController(); const timer=setTimeout(()=>ctl.abort(),18000);
+    try{
+      const r=await fetch(reader,{headers:{'Accept':'text/plain'},signal:ctl.signal});
+      if(!r.ok) throw new Error(`Reader HTTP ${r.status}`);
+      const text=await r.text();
+      const tracks=parseBeatportMarkdown(text);
+      if(!tracks.length) throw new Error('Keine Track-Metadaten erkannt');
+      return tracks;
+    } finally {clearTimeout(timer);}
   }
 
-  function tokenScore(a = '', b = '') {
-    const aa = new Set(cleanForMatch(a).split(' ').filter(Boolean));
-    const bb = new Set(cleanForMatch(b).split(' ').filter(Boolean));
-    if (!aa.size || !bb.size) return 0;
-    let hit = 0;
-    aa.forEach(x => { if (bb.has(x)) hit++; });
-    return (2 * hit) / (aa.size + bb.size);
-  }
-
-  function resultScore(r) {
-    const artist = normalize(els.artist.value);
-    const title = normalize(els.title.value);
-    const artistScore = artist ? tokenScore(artist, r.artistName || '') : .45;
-    const titleScore = title ? tokenScore(title, r.trackName || '') : .45;
-    let bonus = 0;
-    const wanted = `${artist} ${title}`.toLowerCase();
-    const got = `${r.artistName || ''} ${r.trackName || ''}`.toLowerCase();
-    if (/original mix/i.test(wanted) && /original mix/i.test(got)) bonus += .08;
-    if (/extended mix/i.test(wanted) && /extended mix/i.test(got)) bonus += .08;
-    if (/remix/i.test(wanted) && /remix/i.test(got)) bonus += .06;
-    return Math.min(1, artistScore * .42 + titleScore * .58 + bonus);
-  }
-
-  function itunesSearch(term) {
-    return new Promise((resolve, reject) => {
-      const id = ++previewRequestId;
-      const cb = `__beatbridgeItunes_${Date.now()}_${Math.random().toString(36).slice(2)}`;
-      const script = document.createElement('script');
-      const timeout = setTimeout(() => finish(new Error('Zeitüberschreitung bei der Hörprobensuche')), 9000);
-      let done = false;
-
-      function cleanup() {
-        clearTimeout(timeout);
-        delete window[cb];
-        script.remove();
-      }
-      function finish(err, data) {
-        if (done) return;
-        done = true;
-        cleanup();
-        if (id !== previewRequestId) return resolve({ results: [] });
-        err ? reject(err) : resolve(data || { results: [] });
-      }
-
-      window[cb] = data => finish(null, data);
-      script.onerror = () => finish(new Error('Hörprobensuche konnte nicht geladen werden'));
-      script.src = `https://itunes.apple.com/search?term=${encodeURIComponent(term)}&country=DE&media=music&entity=song&limit=8&explicit=Yes&callback=${encodeURIComponent(cb)}`;
-      document.head.appendChild(script);
-    });
-  }
-
-  function formatTime(sec) {
-    if (!Number.isFinite(sec) || sec < 0) sec = 0;
-    const m = Math.floor(sec / 60);
-    const s = Math.floor(sec % 60).toString().padStart(2, '0');
-    return `${m}:${s}`;
-  }
-
-  function setPreviewState(state, message = '') {
-    els.previewEmpty.classList.toggle('hidden', state !== 'empty');
-    els.previewLoading.classList.toggle('hidden', state !== 'loading');
-    els.previewPlayer.classList.toggle('hidden', state !== 'player');
-    els.previewError.classList.toggle('hidden', state !== 'error');
-    if (state === 'error') els.previewError.textContent = message;
-  }
-
-  function showMiniPlayer(show = true) {
-    els.miniPlayer.classList.toggle('hidden', !show);
-    document.body.classList.toggle('has-mini', show);
-  }
-
-  function syncTrackMeta(r) {
-    const art = (r.artworkUrl100 || '').replace('100x100bb', '300x300bb');
-    const title = r.trackName || 'Unbekannter Titel';
-    const artist = r.artistName || 'Unbekannter Artist';
-
-    els.previewTitle.textContent = title;
-    els.previewArtist.textContent = artist;
-    els.previewArtwork.src = art;
-    els.previewArtwork.alt = `Cover von ${title}`;
-
-    els.miniTitle.textContent = title;
-    els.miniArtist.textContent = artist;
-    els.miniArtwork.src = art;
-    els.miniArtwork.alt = `Cover von ${title}`;
-  }
-
-  function syncPlaybackUI() {
-    const playing = !els.previewAudio.paused && !els.previewAudio.ended;
-    const glyph = playing ? 'Ⅱ' : '▶';
-    const label = playing ? 'Hörprobe pausieren' : 'Hörprobe abspielen';
-
-    [els.previewPlay, els.miniPlay].forEach(btn => {
-      btn.textContent = glyph;
-      btn.classList.toggle('playing', playing);
-      btn.setAttribute('aria-label', label);
-    });
-  }
-
-  function stopPreview(reset = true, hideMini = false) {
-    els.previewAudio.pause();
-    if (reset) {
-      try { els.previewAudio.currentTime = 0; } catch {}
-      els.previewSeek.value = '0';
-      els.miniSeek.value = '0';
-      els.previewCurrent.textContent = '0:00';
-      els.miniCurrent.textContent = '0:00';
+  async function loadChart(force=false){
+    els.heading.textContent=heading();els.chartTitle.textContent=heading();els.kicker.textContent=state.view==='history'?'LOKAL':'BEATPORT';
+    if(state.view==='history'){
+      state.tracks=history();setStatus('ok','Lokal gespeichert');renderTrackList();return;
     }
-    syncPlaybackUI();
-    if (hideMini) {
-      currentPreview = null;
-      showMiniPlayer(false);
+    setLoading(true);setStatus('ok','Live-Daten werden geladen');
+    if(!force){const c=getCache();if(c&&c.length){state.tracks=c;setStatus('ok','Beatport · zwischengespeichert');renderTrackList();refreshInBackground();return;}}
+    try{state.tracks=await fetchBeatport(beatportUrl());setCache(state.tracks);setStatus('ok','Beatport · live');renderTrackList();}
+    catch(err){
+      const stale=(()=>{try{return JSON.parse(localStorage.getItem(cacheKey())||'null')?.data}catch{return null}})();
+      if(stale&&stale.length){state.tracks=stale;setStatus('error','Beatport · letzter Stand');renderTrackList();toast('Live-Aktualisierung nicht erreichbar');}
+      else showError('Beatport-Liste konnte nicht geladen werden.',`Die PWA darf Beatport nicht direkt einbetten. BeatBridge nutzt deshalb einen Reader für die öffentliche Seite. Dieser war gerade nicht erreichbar (${err.message}).`);
     }
   }
+  async function refreshInBackground(){try{const fresh=await fetchBeatport(beatportUrl());if(fresh.length){state.tracks=fresh;setCache(fresh);setStatus('ok','Beatport · live');renderTrackList();}}catch{}}
 
-  async function playAudio() {
-    if (!els.previewAudio.src) return false;
-    if (els.previewAudio.ended) {
-      try { els.previewAudio.currentTime = 0; } catch {}
-    }
-    try {
-      await els.previewAudio.play();
-      syncPlaybackUI();
-      return true;
-    } catch {
-      syncPlaybackUI();
-      toast('Zum Starten bitte ▶ im Player antippen');
-      return false;
-    }
+  function filteredTracks(){const q=normalize(els.filter.value).toLowerCase();if(!q)return state.tracks;return state.tracks.filter(t=>`${t.title} ${t.artist} ${t.label} ${t.release}`.toLowerCase().includes(q));}
+  function renderTrackList(){
+    setLoading(false);const tracks=filteredTracks();els.count.textContent=`${tracks.length} Tracks`;els.clearSearch.classList.toggle('hidden',!els.filter.value);
+    if(!tracks.length){els.list.classList.add('hidden');els.empty.classList.remove('hidden');return;}
+    els.empty.classList.add('hidden');els.list.classList.remove('hidden');
+    els.list.innerHTML=tracks.map((t,i)=>`<article class="track-row" data-index="${state.tracks.indexOf(t)}">
+      <span class="rank">${t.rank||i+1}</span>
+      <button class="row-play ${currentPreviewTrack&&currentPreviewTrack.title===t.title&&currentPreviewTrack.artist===t.artist?'active':''}" data-action="play" type="button" aria-label="Hörprobe">▶</button>
+      <div class="track-main">
+        <strong class="track-title">${esc(t.title)}</strong>
+        <span class="track-artist">${esc(t.artist||'Unbekannter Artist')}</span>
+        <div class="track-sub">${t.label?`<span>${esc(t.label)}</span>`:''}${t.release&&t.release!==t.title?`<span>${esc(t.release)}</span>`:''}</div>
+      </div>
+      <div class="track-tech">${t.bpm?`${esc(t.bpm)} BPM<br>`:''}${t.key?esc(t.key):''}</div>
+      <button class="more-btn" data-action="more" type="button" aria-label="Öffnen mit">•••</button>
+    </article>`).join('');
   }
 
-  async function renderPreviewResult(index, autoPlay = false) {
-    if (!previewResults.length) return;
-    previewIndex = Math.max(0, Math.min(index, previewResults.length - 1));
-    const r = previewResults[previewIndex];
-    currentPreview = r;
+  function cleanForMatch(s=''){return normalize(s).toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'').replace(/\b(original|extended|radio|club|mix|remix|edit|version|rework|bootleg)\b/g,' ').replace(/[^a-z0-9]+/g,' ').replace(/\s+/g,' ').trim();}
+  function tokenScore(a='',b=''){const aa=new Set(cleanForMatch(a).split(' ').filter(Boolean)),bb=new Set(cleanForMatch(b).split(' ').filter(Boolean));if(!aa.size||!bb.size)return 0;let hit=0;aa.forEach(x=>{if(bb.has(x))hit++});return 2*hit/(aa.size+bb.size);}
+  function itunesSearch(term){return new Promise((resolve,reject)=>{const id=++previewRequestId,cb=`__bb_${Date.now()}_${Math.random().toString(36).slice(2)}`,s=document.createElement('script');let done=false;const timer=setTimeout(()=>finish(new Error('Zeitüberschreitung')),9000);function finish(e,d){if(done)return;done=true;clearTimeout(timer);delete window[cb];s.remove();if(id!==previewRequestId)return resolve({results:[]});e?reject(e):resolve(d||{results:[]});}window[cb]=d=>finish(null,d);s.onerror=()=>finish(new Error('Preview-Suche nicht erreichbar'));s.src=`https://itunes.apple.com/search?term=${encodeURIComponent(term)}&country=DE&media=music&entity=song&limit=8&explicit=Yes&callback=${encodeURIComponent(cb)}`;document.head.appendChild(s);});}
+  function scoreResult(r,t){return tokenScore(t.title,r.trackName||'')*.62+tokenScore(t.artist,r.artistName||'')*.38;}
+  async function previewTrack(track,btn=null){
+    if(!track?.title)return; if(btn)btn.classList.add('loading'); remember(track);
+    try{
+      const data=await itunesSearch(`${track.artist} ${track.title}`); const results=(data.results||[]).filter(r=>r.previewUrl).sort((a,b)=>scoreResult(b,track)-scoreResult(a,track));
+      if(!results.length)throw new Error('Keine Hörprobe gefunden');
+      const r=results[0]; currentPreviewTrack=track; els.audio.pause();els.audio.src=r.previewUrl;els.audio.load();
+      els.miniArt.src=(r.artworkUrl100||'').replace('100x100bb','300x300bb');els.miniTitle.textContent=r.trackName||track.title;els.miniArtist.textContent=r.artistName||track.artist;const s=scoreResult(r,track);els.miniMatch.textContent=s>.78?'Sehr guter Treffer':s>.58?'Wahrscheinlicher Treffer':'Möglicher Treffer';els.mini.classList.remove('hidden');els.miniSeek.value='0';els.miniTime.textContent='0:00';renderTrackList();
+      try{await els.audio.play();}catch{toast('Zum Starten ▶ antippen');}syncPlay();
+    }catch(e){toast(e.message||'Keine Hörprobe gefunden');}finally{if(btn)btn.classList.remove('loading');}
+  }
+  function syncPlay(){const playing=!els.audio.paused&&!els.audio.ended;els.miniPlay.textContent=playing?'Ⅱ':'▶';els.miniPlay.setAttribute('aria-label',playing?'Pausieren':'Abspielen');}
 
-    els.previewAudio.pause();
-    els.previewAudio.src = r.previewUrl || '';
-    els.previewAudio.load();
-    syncTrackMeta(r);
+  function queryFor(track,service){let q=normalize(`${track.artist||''} ${track.title||''}`);if(els.extended.checked&&['soundcloud','youtube','ytmusic'].includes(service)&&!/(mix|remix|edit|version|bootleg)/i.test(q))q+=' extended mix';return q;}
+  function openUrl(url){const w=window.open(url,'_blank','noopener,noreferrer');if(!w)location.href=url;}
+  async function copyText(t){try{await navigator.clipboard.writeText(t);return true}catch{const ta=document.createElement('textarea');ta.value=t;document.body.appendChild(ta);ta.select();document.execCommand('copy');ta.remove();return true;}}
+  async function openService(service,track){const q=queryFor(track,service);if(!q)return;remember(track);const e=encodeURIComponent(q);if(service==='soundcloud')openUrl(`https://soundcloud.com/search?q=${e}`);else if(service==='spotify')openUrl(`https://open.spotify.com/search/${e}`);else if(service==='youtube')openUrl(`https://www.youtube.com/results?search_query=${e}`);else if(service==='ytmusic')openUrl(`https://music.youtube.com/search?q=${e}`);else if(service==='google')openUrl(`https://www.google.com/search?q=${e}`);else if(service==='simpmusic'){await copyText(q);toast('Suche kopiert – SimpMusic wird geöffnet');setTimeout(()=>{location.href='simpmusic://'},120);setTimeout(()=>{if(document.visibilityState==='visible')openUrl('https://simpmusic.org/')},900);}closeSheet();}
+  function openSheet(track){state.selected=track;els.sheetTitle.textContent=track.title;els.sheetArtist.textContent=track.artist;els.sheet.classList.remove('hidden');els.sheet.setAttribute('aria-hidden','false');}
+  function closeSheet(){els.sheet.classList.add('hidden');els.sheet.setAttribute('aria-hidden','true');}
 
-    const score = resultScore(r);
-    els.previewMatch.textContent = score >= .82 ? 'Sehr guter Treffer' : score >= .62 ? 'Wahrscheinlicher Treffer' : 'Möglicher Treffer';
-    els.previewStoreLink.href = r.trackViewUrl || '#';
-    els.resultCounter.textContent = `${previewIndex + 1}/${previewResults.length}`;
-    els.previewResultNav.classList.toggle('hidden', previewResults.length <= 1);
-    els.prevResult.disabled = previewIndex <= 0;
-    els.nextResult.disabled = previewIndex >= previewResults.length - 1;
-
-    els.previewSeek.value = '0';
-    els.miniSeek.value = '0';
-    els.previewSeek.max = '30';
-    els.miniSeek.max = '30';
-    els.previewCurrent.textContent = '0:00';
-    els.miniCurrent.textContent = '0:00';
-    els.previewDuration.textContent = '0:30';
-    els.miniDuration.textContent = '0:30';
-
-    setPreviewState('player');
-    showMiniPlayer(true);
-    syncPlaybackUI();
-    rememberCurrent(r);
-
-    if (autoPlay) await playAudio();
+  function parseSharedText(raw=''){
+    let text=normalize(raw); if(!text)return {};
+    const url=(text.match(/https?:\/\/[^\s]+/i)||[])[0]||'';
+    text=normalize(text.replace(url,''));
+    text=text.replace(/\s*[|–-]\s*Beatport.*$/i,'').replace(/\bon Beatport\b.*$/i,'').trim();
+    let m=text.match(/^(.+?)\s+by\s+(.+?)$/i); if(m)return {title:normalize(m[1]),artist:normalize(m[2]),url};
+    m=text.match(/^(.+?)\s+[–—-]\s+(.+)$/); if(m)return {artist:normalize(m[1]),title:normalize(m[2]),url};
+    return {title:text,url};
+  }
+  function loadShareTarget(){
+    const p=new URLSearchParams(location.search), st=p.get('title')||'', sx=p.get('text')||'', su=p.get('url')||'';
+    if(!(st||sx||su))return;
+    const a=parseSharedText(st),b=parseSharedText(sx),data={artist:a.artist||b.artist||'',title:a.title||b.title||'',url:su||b.url||a.url||''};
+    els.artist.value=data.artist;els.title.value=data.title;
+    if(data.artist||data.title){toast('Von Beatport übernommen');setTimeout(()=>previewTrack({artist:data.artist,title:data.title,url:data.url}),250);}
+    history.replaceState({},'',location.pathname);
   }
 
-  async function findPreview(autoPlay = false) {
-    const q = query();
-    if (!q) { toast('Bitte Artist oder Titel eingeben'); els.artist.focus(); return; }
+  renderGenres();renderServices(els.sheetServices,false);renderServices(els.manualServices,true);
+  loadShareTarget();loadChart();
 
-    // The old preview may keep playing while the user prepares another track.
-    // It is only switched when a valid new result has actually been found.
-    previewResults = [];
-    els.findPreview.disabled = true;
-    setPreviewState('loading');
-    try {
-      const data = await itunesSearch(q);
-      const results = (data.results || []).filter(r => r.kind === 'song' && r.previewUrl);
-      results.sort((a, b) => resultScore(b) - resultScore(a));
-      previewResults = results.slice(0, 5);
-      if (!previewResults.length) {
-        setPreviewState('error', 'Keine passende Hörprobe gefunden. Der laufende Mini-Player bleibt unverändert.');
-        return;
-      }
-      await renderPreviewResult(0, autoPlay);
-    } catch (err) {
-      setPreviewState('error', err && err.message ? err.message : 'Hörprobe konnte nicht geladen werden.');
-    } finally {
-      els.findPreview.disabled = false;
-    }
-  }
-
-  async function togglePreviewPlayback() {
-    if (!els.previewAudio.src) return;
-    if (els.previewAudio.paused || els.previewAudio.ended) await playAudio();
-    else els.previewAudio.pause();
-  }
-
-  function getHistory() {
-    try { return JSON.parse(localStorage.getItem(HISTORY_KEY) || '[]'); } catch { return []; }
-  }
-
-  function previewSnapshot(r) {
-    if (!r || !r.previewUrl) return null;
-    return {
-      previewUrl: r.previewUrl,
-      trackName: r.trackName || '',
-      artistName: r.artistName || '',
-      artworkUrl100: r.artworkUrl100 || '',
-      trackViewUrl: r.trackViewUrl || '',
-      kind: 'song'
-    };
-  }
-
-  function rememberCurrent(preview = null) {
-    const item = {
-      artist: normalize(els.artist.value),
-      title: normalize(els.title.value),
-      url: normalize(els.url.value),
-      t: Date.now()
-    };
-    if (!item.artist && !item.title) return;
-
-    const key = `${item.artist}|${item.title}`.toLowerCase();
-    const hist = getHistory();
-    const old = hist.find(x => `${x.artist}|${x.title}`.toLowerCase() === key);
-    item.preview = previewSnapshot(preview) || (old && old.preview) || null;
-
-    const next = hist.filter(x => `${x.artist}|${x.title}`.toLowerCase() !== key);
-    next.unshift(item);
-    localStorage.setItem(HISTORY_KEY, JSON.stringify(next.slice(0, 10)));
-    renderHistory();
-  }
-
-  async function playHistoryItem(item) {
-    applyData(item, true);
-    if (item.preview && item.preview.previewUrl) {
-      previewResults = [item.preview];
-      await renderPreviewResult(0, true);
-      return;
-    }
-    await findPreview(true);
-  }
-
-  function renderHistory() {
-    const hist = getHistory();
-    els.historySection.classList.toggle('hidden', !hist.length);
-    els.historyList.innerHTML = '';
-
-    hist.forEach(item => {
-      const row = document.createElement('div');
-      row.className = 'history-item';
-
-      const select = document.createElement('button');
-      select.type = 'button';
-      select.className = 'history-select';
-
-      const text = document.createElement('span');
-      const strong = document.createElement('strong');
-      strong.textContent = item.title || 'Ohne Titel';
-      const small = document.createElement('small');
-      small.textContent = item.artist || 'Unbekannter Artist';
-      text.append(strong, small);
-
-      const arrow = document.createElement('span');
-      arrow.className = 'arrow';
-      arrow.textContent = '›';
-      select.append(text, arrow);
-      select.addEventListener('click', () => {
-        applyData(item, true);
-        document.querySelector('.editor-card')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
-      });
-
-      const play = document.createElement('button');
-      play.type = 'button';
-      play.className = 'history-play';
-      play.textContent = '▶';
-      play.setAttribute('aria-label', `${item.artist || ''} ${item.title || ''} anhören`.trim());
-      play.title = item.preview ? 'Sofort anhören' : 'Hörprobe suchen und abspielen';
-      play.addEventListener('click', () => playHistoryItem(item));
-
-      row.append(select, play);
-      els.historyList.appendChild(row);
-    });
-  }
-
-  async function pasteClipboard() {
-    try {
-      const text = await navigator.clipboard.readText();
-      if (!text) return toast('Zwischenablage ist leer');
-      applyData(parseSharedText(text), true);
-      toast('Zwischenablage übernommen');
-    } catch {
-      toast('Browser erlaubt das Lesen der Zwischenablage nicht');
-    }
-  }
-
-  function seekTo(value) {
-    if (!Number.isFinite(els.previewAudio.duration)) return;
-    els.previewAudio.currentTime = Math.min(Number(value), els.previewAudio.duration || 30);
-  }
-
-  ['artist', 'title', 'url'].forEach(k => els[k].addEventListener('input', updatePreview));
-  document.querySelectorAll('[data-service]').forEach(btn => btn.addEventListener('click', () => openService(btn.dataset.service)));
-
-  els.findPreview.addEventListener('click', () => findPreview(false));
-  els.previewPlay.addEventListener('click', togglePreviewPlayback);
-  els.miniPlay.addEventListener('click', togglePreviewPlayback);
-
-  els.prevResult.addEventListener('click', () => renderPreviewResult(previewIndex - 1, !els.previewAudio.paused));
-  els.nextResult.addEventListener('click', () => renderPreviewResult(previewIndex + 1, !els.previewAudio.paused));
-
-  els.previewSeek.addEventListener('input', () => seekTo(els.previewSeek.value));
-  els.miniSeek.addEventListener('input', () => seekTo(els.miniSeek.value));
-
-  els.miniExpand.addEventListener('click', () => {
-    document.querySelector('.preview-card')?.scrollIntoView({ behavior: 'smooth', block: 'center' });
-  });
-
-  els.previewAudio.addEventListener('loadedmetadata', () => {
-    const d = Number.isFinite(els.previewAudio.duration) ? els.previewAudio.duration : 30;
-    els.previewSeek.max = String(d);
-    els.miniSeek.max = String(d);
-    els.previewDuration.textContent = formatTime(d);
-    els.miniDuration.textContent = formatTime(d);
-  });
-
-  els.previewAudio.addEventListener('timeupdate', () => {
-    const t = els.previewAudio.currentTime || 0;
-    els.previewSeek.value = String(t);
-    els.miniSeek.value = String(t);
-    els.previewCurrent.textContent = formatTime(t);
-    els.miniCurrent.textContent = formatTime(t);
-  });
-
-  els.previewAudio.addEventListener('play', syncPlaybackUI);
-  els.previewAudio.addEventListener('pause', syncPlaybackUI);
-  els.previewAudio.addEventListener('ended', () => {
-    try { els.previewAudio.currentTime = 0; } catch {}
-    els.previewSeek.value = '0';
-    els.miniSeek.value = '0';
-    els.previewCurrent.textContent = '0:00';
-    els.miniCurrent.textContent = '0:00';
-    syncPlaybackUI();
-  });
-
-  $('openBeatportBtn').addEventListener('click', () => openUrl('https://www.beatport.com/'));
-  $('pasteBtn').addEventListener('click', pasteClipboard);
-  $('clearBtn').addEventListener('click', () => {
-    els.artist.value = ''; els.title.value = ''; els.url.value = '';
-    previewResults = [];
-    stopPreview(true, true);
-    els.previewAudio.removeAttribute('src');
-    els.previewAudio.load();
-    setPreviewState('empty');
-    updatePreview();
-    els.artist.focus();
-  });
-  $('clearHistoryBtn').addEventListener('click', () => {
-    localStorage.removeItem(HISTORY_KEY);
-    renderHistory();
-    toast('Verlauf gelöscht');
-  });
-
-  window.addEventListener('beforeinstallprompt', (e) => {
-    e.preventDefault(); deferredInstallPrompt = e; els.install.classList.remove('hidden');
-  });
-  els.install.addEventListener('click', async () => {
-    if (!deferredInstallPrompt) return;
-    deferredInstallPrompt.prompt();
-    await deferredInstallPrompt.userChoice;
-    deferredInstallPrompt = null;
-    els.install.classList.add('hidden');
-  });
-  window.addEventListener('appinstalled', () => toast('BeatBridge wurde installiert'));
-
-  if ('serviceWorker' in navigator) {
-    window.addEventListener('load', () => navigator.serviceWorker.register('./sw.js'));
-  }
-
-  setPreviewState('empty');
-  showMiniPlayer(false);
-  renderHistory();
-  updatePreview();
-  loadShareTarget();
-
-  if (new URLSearchParams(location.search).get('open') === 'beatport') {
-    history.replaceState({}, '', location.pathname);
-    setTimeout(() => openUrl('https://www.beatport.com/'), 80);
-  }
+  els.chips.addEventListener('click',e=>{const b=e.target.closest('[data-slug]');if(!b)return;state.genre=GENRES.find(g=>g.slug===b.dataset.slug)||GENRES[0];renderGenres();if(state.view==='history'){state.view='top';document.querySelectorAll('.view-tab').forEach(x=>x.classList.toggle('active',x.dataset.view==='top'));}loadChart();});
+  els.tabs.addEventListener('click',e=>{const b=e.target.closest('[data-view]');if(!b)return;state.view=b.dataset.view;document.querySelectorAll('.view-tab').forEach(x=>x.classList.toggle('active',x===b));loadChart();});
+  els.filter.addEventListener('input',renderTrackList);els.clearSearch.addEventListener('click',()=>{els.filter.value='';renderTrackList();els.filter.focus();});
+  els.retry.addEventListener('click',()=>loadChart(true));els.refresh.addEventListener('click',()=>{if(state.view==='history')loadChart();else loadChart(true)});
+  els.list.addEventListener('click',e=>{const row=e.target.closest('.track-row');if(!row)return;const track=state.tracks[Number(row.dataset.index)];const action=e.target.closest('[data-action]')?.dataset.action;if(action==='play')previewTrack(track,e.target.closest('button'));if(action==='more')openSheet(track);});
+  [els.backdrop,els.sheetClose].forEach(x=>x.addEventListener('click',closeSheet));
+  els.sheetServices.addEventListener('click',e=>{const b=e.target.closest('[data-service]');if(b&&state.selected)openService(b.dataset.service,state.selected);});
+  els.manualServices.addEventListener('click',e=>{const b=e.target.closest('[data-service]');if(!b)return;const t={artist:normalize(els.artist.value),title:normalize(els.title.value)};if(!t.title&&!t.artist)return toast('Artist oder Titel eingeben');openService(b.dataset.service,t);});
+  els.manualPreview.addEventListener('click',()=>{const t={artist:normalize(els.artist.value),title:normalize(els.title.value)};if(!t.title&&!t.artist)return toast('Artist oder Titel eingeben');previewTrack(t)});
+  els.miniPlay.addEventListener('click',async()=>{if(!els.audio.src)return;if(els.audio.paused){try{await els.audio.play()}catch{}}else els.audio.pause();syncPlay();});
+  els.audio.addEventListener('play',syncPlay);els.audio.addEventListener('pause',syncPlay);els.audio.addEventListener('ended',syncPlay);els.audio.addEventListener('loadedmetadata',()=>{els.miniSeek.max=Number.isFinite(els.audio.duration)?els.audio.duration:30;});els.audio.addEventListener('timeupdate',()=>{if(!els.miniSeek.matches(':active'))els.miniSeek.value=els.audio.currentTime||0;els.miniTime.textContent=formatTime(els.audio.currentTime||0);});els.miniSeek.addEventListener('input',()=>{if(Number.isFinite(els.audio.duration))els.audio.currentTime=Number(els.miniSeek.value)});
+  window.addEventListener('beforeinstallprompt',e=>{e.preventDefault();deferredInstall=e;els.install.classList.remove('hidden')});els.install.addEventListener('click',async()=>{if(!deferredInstall)return;deferredInstall.prompt();await deferredInstall.userChoice;deferredInstall=null;els.install.classList.add('hidden')});
+  if('serviceWorker' in navigator)window.addEventListener('load',()=>navigator.serviceWorker.register('./sw.js').catch(()=>{}));
 })();

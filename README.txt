@@ -1,39 +1,30 @@
-BeatBridge PWA – Version 1.2
-============================
+BeatBridge PWA v1.3
+===================
 
-Neu in 1.2
-- Fester Mini-Player am unteren Bildschirmrand.
-- Die aktuelle Hörprobe läuft weiter, während du einen anderen Track auswählst oder die Eingabefelder änderst.
-- Mini-Player zeigt Cover, Artist, Titel, Zeit und eine verschiebbare Zeitleiste.
-- Play/Pause funktioniert sowohl im großen Hörproben-Player als auch im Mini-Player synchron.
-- Tippen auf Titel/Artist im Mini-Player springt zurück zur großen Hörproben-Karte.
-- Jeder Eintrag im Verlauf hat jetzt einen eigenen ▶-Button.
-- Bereits gefundene Preview-URLs werden lokal im Verlauf gespeichert. Dadurch starten bekannte Tracks per ▶ sofort, ohne neue Suche.
-- Bei älteren Verlaufseinträgen ohne gespeicherte Preview sucht BeatBridge automatisch eine Hörprobe.
-- Beim Suchen eines neuen Tracks wird die laufende Hörprobe erst ersetzt, wenn tatsächlich ein neuer Treffer gefunden wurde.
+NEU IN 1.3
+- Beatport-inspirierte interne Digging-Ansicht statt externem Hin-und-her-Wechseln.
+- Global Top 100 und Genre-Ansichten in der PWA.
+- Bereiche: Top 100, neue Tracks, Hype 100, lokaler Verlauf.
+- Genres u.a. Hard Techno, Techno (Peak Time / Driving), Tech House, House,
+  Melodic House & Techno, Deep House, Progressive House, Drum & Bass, Organic House.
+- Trackliste mit Rank, Artist, Titel sowie BPM/Key/Label, soweit von der öffentlichen
+  Beatport-Seite geliefert.
+- Direktes ▶ Reinhören aus jeder Trackzeile; der feste Mini-Player bleibt sichtbar.
+- „•••“ pro Track öffnet SimpMusic, SoundCloud, Spotify, YouTube Music, YouTube, Google.
+- Lokaler Verlauf und 15-Minuten-Cache.
 
-Weiterhin enthalten
-- Hörprobensuche nach Artist + Titel über die iTunes Search API.
-- Bis zu 5 passende Treffer.
-- SoundCloud, Spotify, YouTube, YouTube Music, SimpMusic und Google.
-- Android Share Target: Beatport -> Teilen -> BeatBridge.
-- PWA/Offline-Oberfläche ohne API-Key.
+DATENQUELLE / TECHNIK
+Eine PWA kann beatport.com wegen Browser-Sicherheitsregeln nicht einfach per iframe
+oder direktem Cross-Origin-Fetch einbetten. BeatBridge ruft deshalb die öffentliche
+Beatport-Webseite über den Jina Reader (r.jina.ai) als Text/Metadaten ab und baut daraus
+eine eigene mobile Übersicht. Für einfache Reader-Nutzung ist kein API-Key hinterlegt.
+Wenn Beatport oder der Reader sein Ausgabeformat ändert, kann der Parser angepasst werden.
 
-Wichtig zur Hörprobe
-Beatports eigene Audio-Preview ist für Drittanbieter nicht als frei zugängliche PWA-Schnittstelle verfügbar.
-Daher nutzt BeatBridge als kostenlose Fallback-Hörprobe die iTunes Search API. Beatport-exklusive Tracks können dort fehlen.
-Die Hörprobe wird nur gestreamt und nicht offline gespeichert.
+HÖRPROBEN
+Die integrierte Hörprobe wird weiterhin über die öffentliche iTunes-Suche gematcht.
+Sie ist deshalb nicht zwingend dieselbe Preview-Datei wie auf Beatport. Beatport-exklusive
+Tracks können dort fehlen.
 
-Installation / Hosting
-1. Alle Dateien unverändert auf einen HTTPS-Webserver oder GitHub Pages hochladen.
-2. index.html öffnen.
-3. Im Browser "App installieren" / "Zum Startbildschirm hinzufügen" wählen.
-
-Android Share Target
-Nach der Installation sollte BeatBridge im Android-Teilen-Menü als Ziel erscheinen.
-Bei Beatport im Browser: Track öffnen -> Teilen -> BeatBridge.
-Je nach Browser werden Titel, Text und/oder URL übertragen.
-
-SimpMusic
-SimpMusic unterstützt eigene Deep Links, aber aktuell ist kein stabil dokumentierter externer Such-Deep-Link für freien Suchtext verfügbar.
-Darum kopiert BeatBridge die Suchanfrage und öffnet SimpMusic. Dort nur noch in das Suchfeld einfügen.
+INSTALLATION
+Alle Dateien zusammen auf einen HTTPS-Webspace / GitHub Pages hochladen. index.html öffnen
+und im Browser „App installieren“ / „Zum Startbildschirm hinzufügen“ wählen.
