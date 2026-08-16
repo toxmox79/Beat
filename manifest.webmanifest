@@ -2,7 +2,7 @@
   "id": "./",
   "name": "BeatBridge – Music Finder",
   "short_name": "BeatBridge",
-  "description": "Beatport-Charts in einer PWA entdecken, mit Beatport/Spotify-Fallback vorhören und in SimpMusic, SoundCloud, Spotify, YouTube und YouTube Music öffnen.",
+  "description": "Beatport-Charts in einer PWA entdecken, mit Beatport/Spotify/Deezer-Fallback vorhören und in SimpMusic, SoundCloud, Spotify, YouTube und YouTube Music öffnen.",
   "start_url": "./",
   "scope": "./",
   "display": "standalone",
